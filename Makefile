@@ -11,16 +11,22 @@ else
 	SHOBJ_LDFLAGS ?= -bundle -undefined dynamic_lookup
 endif
 
+JSON_PATH = thirdparty/json-c
+JSON_LIB = $(JSON_PATH)/.libs
+
 .SUFFIXES: .c .so .xo .o
 
 all: reji.so
+
+$(JSON_LIB)/libjson-c.a:
+	cd $(JSON_PATH); ./autogen.sh; ./configure; make; cd -
 
 .c.xo:
 	$(CC) -I. $(CFLAGS) $(SHOBJ_CFLAGS) -fPIC -c $< -o $@
 
 reji_main.xo: ../redismodule.h
 
-reji.so: reji_main.xo
+reji.so: $(JSON_LIB)/libjson-c.a reji_main.xo
 	$(LD) -o $@ $< $(SHOBJ_LDFLAGS) $(LIBS) -lc
 
 clean:
