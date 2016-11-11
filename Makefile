@@ -13,6 +13,9 @@ endif
 
 JSON_PATH = thirdparty/json-c
 JSON_LIB = $(JSON_PATH)/.libs
+CFLAGS += -I$(JSON_PATH)
+SHOBJ_LDFLAGS += -L$(JSON_LIB) 
+LIBS += -ljson-c
 
 .SUFFIXES: .c .so .xo .o
 
@@ -27,7 +30,7 @@ $(JSON_LIB)/libjson-c.a:
 reji_main.xo: ../redismodule.h
 
 reji.so: $(JSON_LIB)/libjson-c.a reji_main.xo
-	$(LD) -o $@ $< $(SHOBJ_LDFLAGS) $(LIBS) -lc
+	$(LD) -o $@ reji_main.xo $(SHOBJ_LDFLAGS) $(LIBS) -lc
 
 clean:
 	rm -rf *.xo *.so
