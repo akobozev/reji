@@ -1,4 +1,3 @@
-#include "../redismodule.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -6,6 +5,36 @@
 #include <string.h>
 
 #include "json.h"
+#include "reji_schema.h"
+#include "../redismodule.h"
+
+//============================================================
+int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+	RedisModule_AutoMemory(ctx);
+
+	if (argc != 2)
+		return RedisModule_WrongArity(ctx);
+
+	size_t json_data_len = 0;
+	const char *json_data = RedisModule_StringPtrLen(argv[1], &json_data_len);
+	reji_index_t *index = NULL;
+
+	int res = reji_index_create(json_data, json_data_len, &index);
+ 
+	// index by "name" field
+	if(res && index)
+	{
+		RedisModuleString *index_key_string = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, "REJI:IDX:%s", index->name);
+		RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, index_key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+		RedisModule_StringSet(redis_key, argv[1]);
+		RedisModule_CloseKey(redis_key);
+		return RedisModule_ReplyWithSimpleString(ctx, "OK");
+	}
+	
+	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+}
+
 
 /* REJI.PUT <key> <json_object> -- adds a record to Redis store and indexes it */
 int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
