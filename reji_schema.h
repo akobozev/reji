@@ -17,6 +17,10 @@ extern "C" {
 #define REJI_INDEX_UNIQUE 	0x1
 #define REJI_INDEX_CASE		0x2
 
+// schema status codes
+#define SCHEMA_OK 0
+#define SCHEMA_FAIL 1
+ 
 typedef struct _reji_index
 {
 	char *name;
