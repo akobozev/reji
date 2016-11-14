@@ -54,25 +54,35 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 	int res = SCHEMA_FAIL;
 	reji_index_t *index = NULL;
 
+    struct json_tokener* tok = json_tokener_new();
+    json_tokener_set_flags(tok, 0);
+
 	do
 	{
 		// try to parse the record first
-		struct json_tokener* tok = json_tokener_new();
-		json_tokener_set_flags(tok, 0);
 		struct json_object *jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
 
 		//printf("index start parsing\n");
 		if(jobj)
 		{
 			json_object *val = NULL;
-			index = (reji_index_t*)calloc(1, sizeof(reji_index_t));
 
-			if(!json_object_object_get_ex(jobj, INDEX_NAME, &val))
+            if(!json_object_object_get_ex(jobj, INDEX_NAME, &val))
 			{
 				break;
 			}
-			
-			index->name = strdup(json_object_get_string(val));
+
+            const char *tmp = json_object_get_string(val);
+
+            IndexMap::iterator it = g_index_map->find((char*)tmp);
+            if(it != g_index_map->end())
+            {
+                res = SCHEMA_INDEX_EXISTS;
+                break;
+            }
+            
+			index = (reji_index_t*)calloc(1, sizeof(reji_index_t));
+            index->name = strdup(tmp);
 			//printf("index name: %s\n", index->name);
 			
 			if(json_object_object_get_ex(jobj, INDEX_UNIQUE, &val))
@@ -113,6 +123,8 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 		reji_index_release(index);
 	}
 	
+    json_tokener_free(tok);
+
 	return res;
 }
 
@@ -129,7 +141,7 @@ int reji_index_drop(char *indexName)
         return SCHEMA_OK;
 	}
 	
-	return SCHEMA_FAIL;
+	return SCHEMA_INDEX_NOT_EXISTS;
 }
 
 //============================================================

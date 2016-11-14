@@ -20,6 +20,8 @@ extern "C" {
 // schema status codes
 #define SCHEMA_OK 0
 #define SCHEMA_FAIL 1
+#define SCHEMA_INDEX_EXISTS 2
+#define SCHEMA_INDEX_NOT_EXISTS 3
  
 typedef struct _reji_index
 {

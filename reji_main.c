@@ -44,6 +44,12 @@ int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
                             elem_key_len, elem_key_len, elem_key_str, 
                             elem_data_len, elem_data_len, elem_data_str);
         }
+        else
+        {
+            RedisModule_Log(ctx, "notice", "Index already loaded: %*.*s",
+                            elem_key_len, elem_key_len, elem_key_str);
+        }
+        
     }
     
     RedisModule_FreeCallReply(reply);
@@ -74,7 +80,11 @@ int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 		RedisModule_CloseKey(redis_key);
 		return RedisModule_ReplyWithSimpleString(ctx, "OK");
 	}
-	
+	else if(res == SCHEMA_INDEX_EXISTS)
+    {
+        RedisModule_ReplyWithError(ctx, "Index already exists");
+    }
+    
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
 }
 
@@ -102,8 +112,12 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 		RedisModule_CloseKey(redis_key);
 		return RedisModule_ReplyWithSimpleString(ctx, "OK");
 	}
-	
-	return RedisModule_ReplyWithError(ctx, "Index not found");
+	else if(res == SCHEMA_INDEX_NOT_EXISTS)
+    {
+        RedisModule_ReplyWithError(ctx, "Index not found");
+    }
+    
+	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
 }
 
 
