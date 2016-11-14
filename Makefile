@@ -29,7 +29,7 @@ CC_OBJECTS = $(patsubst $(SOURCEDIR)/%.cc, $(SOURCEDIR)/%.xo, $(CC_SOURCES))
 all: reji.so
 
 $(JSON_LIB)/libjson-c.a:
-	cd $(JSON_PATH); ./autogen.sh; ./configure; make; cd -
+	cd $(JSON_PATH); ./autogen.sh; ./configure --with-pic; make; cd -
 
 .c.xo:
 	$(CC) -I. $(CFLAGS) $(SHOBJ_CFLAGS) -fPIC -c $< -o $@
