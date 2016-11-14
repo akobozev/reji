@@ -23,14 +23,9 @@ bool indexComp(char *lhs, char *rhs)
 }
 
 //============================================================
-void reji_schema_init(char *indexes)
+void reji_schema_init()
 {
 	g_index_map = new IndexMap(indexComp);
-
-	if(indexes)
-	{
-		// parse json index list
-	}
 }
 
 //============================================================
@@ -131,33 +126,80 @@ int reji_index_drop(char *indexName)
 		//printf("drop index: %s\n", it->second->name);
 		reji_index_release(it->second);
 		g_index_map->erase(it);
+        return SCHEMA_OK;
 	}
 	
-	return SCHEMA_OK;
+	return SCHEMA_FAIL;
 }
 
 //============================================================
-void reji_index_get(char *indexName, reji_index_t *index)
+int reji_index_get(char *indexName, reji_index_t **index)
 {
+    IndexMap::iterator it = g_index_map->find(indexName);
 
+    if(it != g_index_map->end() && index)
+    {
+        *index = it->second;
+        return SCHEMA_OK;
+    }
+
+    return SCHEMA_FAIL;
 }
 
 //============================================================
-void reji_index_start(reji_index_iter_t *iter)
+int reji_index_start(reji_index_iter_t **iter)
 {
+    IndexMap::iterator it = g_index_map->begin();
+    if(it != g_index_map->end() && iter)
+    {
+        *iter = (reji_index_iter_t*)malloc(sizeof(reji_index_iter_t));
+        (*iter)->index = it->second;
+        return SCHEMA_OK;
+    }
 
+    return SCHEMA_FAIL;
 }
 
 //============================================================
 void reji_index_stop(reji_index_iter_t *iter)
 {
-
+    if(iter)
+    {
+        iter->index = NULL;
+        free(iter);
+    }
 }
 
 //============================================================
-void reji_index_next(reji_index_iter_t *iter)
+int reji_index_next(reji_index_iter_t *iter)
 {
+    int res = SCHEMA_FAIL;
+    
+    do
+    {
+        if(iter)
+        {
+            reji_index_t *index = iter->index;
 
+            iter->index = NULL;
+            if(index)
+            {
+                IndexMap::iterator it = g_index_map->find(iter->index->name);
+                if(it != g_index_map->end())
+                {
+                    it++;
+                    if(it != g_index_map->end())
+                    {
+                        iter->index = it->second;
+                        res = SCHEMA_OK;
+                    }
+                }
+            }
+        }
+    }
+    while(0);
+
+    return res;
 }
 
 // PRIVATE

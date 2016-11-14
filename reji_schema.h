@@ -32,19 +32,18 @@ typedef struct _reji_index
 typedef struct _reji_index_iter
 {
 	reji_index_t *index;
-	void *iter;
 } reji_index_iter_t;
 	
-void reji_schema_init(char *indexes);
+void reji_schema_init();
 void reji_schema_fini();
 
 int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t **outIndex);
 int reji_index_drop(char *indexName);
 
-void reji_index_get(char *indexName, reji_index_t *index);
-void reji_index_iter_start(reji_index_iter_t *iter);
+int reji_index_get(char *indexName, reji_index_t **index);
+int reji_index_iter_start(reji_index_iter_t **iter);
 void reji_index_iter_stop(reji_index_iter_t *iter);
-void reji_index_iter_next(reji_index_iter_t *iter);
+int reji_index_iter_next(reji_index_iter_t *iter);
 
 #ifdef __cplusplus
 }

@@ -40,7 +40,7 @@ $(SOURCEDIR)/%.xo: $(SOURCEDIR)/%.cc
 reji_main.xo: ../redismodule.h
 
 reji.so: $(JSON_LIB)/libjson-c.a reji_main.xo $(CC_OBJECTS)
-	$(LD) -o $@ reji_main.xo $(CC_OBJECTS) $(JSON_LIB)/libjson-c.a $(SHOBJ_LDFLAGS) -lc
+	g++ -shared -o $@ reji_main.xo $(CC_OBJECTS) $(JSON_LIB)/libjson-c.a $(SHOBJ_LDFLAGS) -lc -lstdc++
 
 clean:
 	rm -rf *.xo *.so
