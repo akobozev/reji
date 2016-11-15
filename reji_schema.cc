@@ -1,12 +1,11 @@
 
 #include "reji_schema.h"
-#include <map>
+#include <unordered_map>
 #include "json.h"
 
-typedef std::map<char *, reji_index_t *, bool(*)(char *, char *)> IndexMap;
-typedef std::pair<char *, reji_index_t *> IndexPair;
-
-typedef std::map<char *, char *, bool(*)(char *,char *)> DataObjectMap;
+typedef std::unordered_map<std::string, reji_index_t *> IndexMap;
+typedef std::pair<std::string, reji_index_t *> IndexPair;
+typedef std::unordered_map<std::string, const char *> JsonObjectMap;
 
 static IndexMap *g_index_map = NULL;
 
@@ -17,12 +16,14 @@ static IndexMap *g_index_map = NULL;
 // forward declarations
 //============================================================
 void reji_index_release(reji_index_t *index);
-bool stringCompareIgnoreCase(char *lhs, char *rhs);
+bool reji_build_index_key(reji_index_t *index, JsonObjectMap obj_map, reji_index_key_t &index_key);
+void reji_free_index_key(reji_index_key_t &index_key);
+char *str_to_lower(char *);
 
 //============================================================
 void reji_schema_init()
 {
-	g_index_map = new IndexMap(stringCompareIgnoreCase);
+	g_index_map = new IndexMap();
 }
 
 //============================================================
@@ -97,7 +98,8 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 			int arrLen = json_object_array_length(val);
 			//printf("column num: %d\n", arrLen);
 			index->columns = (char **)calloc(arrLen, sizeof(char*));
-					
+			index->numColumns = arrLen;
+			
 			for(int i = 0; i < arrLen; i++)		
 			{		
 				json_object *arrVal = json_object_array_get_idx(val, i);
@@ -125,8 +127,6 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 		reji_index_release(index);
 	}
 	
-    json_tokener_free(tok);
-
 	return res;
 }
 
@@ -216,6 +216,47 @@ int reji_index_next(reji_index_iter_t *iter)
     return res;
 }
 
+//============================================================
+int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list)
+{
+	int res = INDEX_OK;
+
+	// index the JSON object fields first
+	JsonObjectMap jobj_map; 
+
+	json_object_object_foreach(jobj, jobj_key, jobj_val)
+	{
+		enum json_type jobj_type = json_object_get_type(jobj_val);
+		
+		// skip all the object and array fields
+		if(jobj_type == json_type_array || jobj_type == json_type_object)
+			continue;
+
+		// associate field name with string value
+		jobj_map[str_to_lower(jobj_key)] = json_object_to_json_string(jobj_val);
+		
+	}
+
+	// iterate over the indices and build the index keys
+    for(IndexMap::iterator idx_it = g_index_map->begin(); idx_it != g_index_map->end(); ++idx_it)
+	{
+		reji_index_key_t index_key = {NULL, NULL};
+
+		// TODO: check return value (?)
+		reji_build_index_key(idx_it->second, jobj_map, index_key);
+		keys_list.push_back(index_key);
+	}
+	
+	return res;
+}	
+
+//============================================================
+void reji_free_index_keys(reji_index_keys_list_t &keys_list)
+{
+	for(reji_index_keys_list_t::iterator it = keys_list.begin(); it != keys_list.end(); ++it)
+		reji_free_index_key(*it);
+}
+
 // PRIVATE
 //============================================================
 void reji_index_release(reji_index_t *index)
@@ -238,7 +279,42 @@ void reji_index_release(reji_index_t *index)
 }
 
 //============================================================
-bool stringCompareIgnoreCase(char *lhs, char *rhs)
+bool reji_build_index_key(reji_index_t *index, JsonObjectMap obj_map, reji_index_key_t &index_key)
 {
-	return (strcasecmp(lhs, rhs) < 0);
-}
+	bool res = true;
+	std::string key_value(REDIS_INDEX_KEY_PREFIX);
+
+	// iterate over index fields and build a key from correspondent jobj values
+	for(int i = 0; i < index->numColumns; i++)
+	{
+		JsonObjectMap::iterator it = obj_map.find(index->columns[i]);
+
+		key_value += REDIS_INDEX_KEY_SEPARATOR;
+		
+		if(it != obj_map.end())
+			key_value += it->second;
+		else
+			res = false;
+	}
+
+	index_key.key = strdup(key_value.c_str());
+	
+	return res;
+}	
+
+//============================================================
+void reji_free_index_key(reji_index_key_t &index_key)
+{
+	if(index_key.key)
+		free((void *)index_key.key);
+}	
+
+//============================================================
+char *str_to_lower(char *str)
+{
+	char *res = str;
+	for(; *str; ++str) *str = tolower(*str);
+	return res;
+}	 
+
+

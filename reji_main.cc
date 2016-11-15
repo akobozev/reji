@@ -86,6 +86,9 @@ int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 	// index by "name" field
 	if(jobj)
 	{
+		reji_index_keys_list_t list;
+		reji_build_index_keys(jobj, list);
+		
 		json_object_object_foreach(jobj, key, val)
 		{
 			if(strcmp(key, "name") == 0)
