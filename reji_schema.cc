@@ -70,17 +70,19 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 				break;
 			}
 
-            const char *tmp = json_object_get_string(val);
+            char *tmp = strdup(json_object_get_string(val));
 
-            IndexMap::iterator it = g_index_map->find((char*)tmp);
+            tmp = str_to_lower(tmp);
+            IndexMap::iterator it = g_index_map->find(tmp);
             if(it != g_index_map->end())
             {
                 res = SCHEMA_INDEX_EXISTS;
+                free(tmp);
                 break;
             }
             
 			index = (reji_index_t*)calloc(1, sizeof(reji_index_t));
-            index->name = strdup(tmp);
+            index->name = tmp;
 			//printf("index name: %s\n", index->name);
 			
 			if(json_object_object_get_ex(jobj, INDEX_UNIQUE, &val))
@@ -103,7 +105,8 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 			for(int i = 0; i < arrLen; i++)		
 			{		
 				json_object *arrVal = json_object_array_get_idx(val, i);
-				index->columns[i] = strdup(json_object_get_string(arrVal));	
+				index->columns[i] = strdup(json_object_get_string(arrVal));
+                index->columns[i] = str_to_lower(index->columns[i]);
 				//printf("column[%d]: %s\n", i, index->columns[i]);
 			}
 			
@@ -131,9 +134,12 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 }
 
 //============================================================
-int reji_index_drop(char *indexName)
+int reji_index_drop(char *indexName, size_t len)
 {
-	IndexMap::iterator it = g_index_map->find(indexName);
+    char *name = strndup(indexName, len);
+    name = str_to_lower(name);
+
+	IndexMap::iterator it = g_index_map->find(name);
 
 	if(it != g_index_map->end())
 	{
@@ -147,9 +153,12 @@ int reji_index_drop(char *indexName)
 }
 
 //============================================================
-int reji_index_get(char *indexName, reji_index_t **index)
+int reji_index_get(char *indexName, size_t len, reji_index_t **index)
 {
-    IndexMap::iterator it = g_index_map->find(indexName);
+    char *name = strndup(indexName, len);
+    name = str_to_lower(name);
+
+    IndexMap::iterator it = g_index_map->find(name);
 
     if(it != g_index_map->end() && index)
     {
@@ -315,6 +324,5 @@ char *str_to_lower(char *str)
 	char *res = str;
 	for(; *str; ++str) *str = tolower(*str);
 	return res;
-}	 
-
+}
 

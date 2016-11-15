@@ -53,9 +53,9 @@ void reji_schema_init();
 void reji_schema_fini();
 
 int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t **outIndex);
-int reji_index_drop(char *indexName);
+int reji_index_drop(char *indexName, size_t len);
 
-int reji_index_get(char *indexName, reji_index_t **index);
+int reji_index_get(char *indexName, size_t len, reji_index_t **index);
 int reji_index_iter_start(reji_index_iter_t **iter);
 void reji_index_iter_stop(reji_index_iter_t *iter);
 int reji_index_iter_next(reji_index_iter_t *iter);

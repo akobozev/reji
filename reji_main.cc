@@ -11,11 +11,70 @@ extern "C" {
 #include "../redismodule.h"
 
 //============================================================
+void PrintArgs(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    for(int i = 0; i < argc; i++)
+    {
+        size_t len = 0;
+        const char *data = RedisModule_StringPtrLen(argv[i], &len);
+        RedisModule_Log(ctx, "notice", "argv[%d]: %*.*s", i, len, len, data);
+    }
+}
+    
+//============================================================
+int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    REDISMODULE_NOT_USED(argv);
+    REDISMODULE_NOT_USED(argc);
+	RedisModule_AutoMemory(ctx);
+
+    RedisModule_Log(ctx, "notice", "Start load indexes");
+    RedisModuleString *index_key_string = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, REDIS_SCHEMA_KEY);
+    RedisModuleCallReply *reply = RedisModule_Call(ctx, "hgetall", "s", index_key_string);
+    
+    if(!reply)
+        return RedisModule_ReplyWithSimpleString(ctx, "OK");
+
+    size_t reply_len = RedisModule_CallReplyLength(reply);
+    RedisModule_Log(ctx, "notice", "Num of indexes: %d", reply_len/2);
+    size_t i = 0;
+    for(; i < reply_len; i += 2)
+    {
+        RedisModuleCallReply *elem_key = RedisModule_CallReplyArrayElement(reply, i);
+        RedisModuleCallReply *elem_data = RedisModule_CallReplyArrayElement(reply, i+1);
+
+        size_t elem_key_len = 0;
+        size_t elem_data_len = 0;
+        const char *elem_key_str = RedisModule_CallReplyStringPtr(elem_key, &elem_key_len);
+        const char *elem_data_str = RedisModule_CallReplyStringPtr(elem_data, &elem_data_len);
+
+        reji_index_t *index = NULL;
+        int res = reji_index_create(elem_data_str, elem_data_len, &index);
+        
+        if(res == SCHEMA_OK && index)
+        {
+            RedisModule_Log(ctx, "notice", "Loaded index[%*.*s]: %*.*s",
+                            elem_key_len, elem_key_len, elem_key_str, 
+                            elem_data_len, elem_data_len, elem_data_str);
+        }
+        else
+        {
+            RedisModule_Log(ctx, "notice", "Index already loaded: %*.*s",
+                            elem_key_len, elem_key_len, elem_key_str);
+        }
+        
+    }
+    
+    RedisModule_FreeCallReply(reply);
+	return RedisModule_ReplyWithSimpleString(ctx, "OK");//0;
+}
+
+//============================================================
 int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
 	RedisModule_AutoMemory(ctx);
 
-	if (argc != 2)
+    if (argc != 2)
 		return RedisModule_WrongArity(ctx);
 
 	size_t json_data_len = 0;
@@ -34,7 +93,11 @@ int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 		RedisModule_CloseKey(redis_key);
 		return RedisModule_ReplyWithSimpleString(ctx, "OK");
 	}
-	
+    else if(res == SCHEMA_INDEX_EXISTS)
+    {
+        RedisModule_ReplyWithError(ctx, "Index already exists");
+    }
+
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
 }
 
@@ -42,15 +105,15 @@ int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
 	RedisModule_AutoMemory(ctx);
-
-	if (argc != 2)
+    
+    if (argc != 2)
 		return RedisModule_WrongArity(ctx);
 
 	size_t len = 0;
 	const char *name = RedisModule_StringPtrLen(argv[1], &len);
 	
-	RedisModule_Log(ctx, "notice", "REJI: drop index: %s", name);
-	int res = reji_index_drop((char*)name);
+	RedisModule_Log(ctx, "notice", "REJI: drop index: %*.*s", len, len, name);
+	int res = reji_index_drop((char*)name, len);
 
 	if(res == SCHEMA_OK)
 	{
@@ -62,7 +125,11 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 		RedisModule_CloseKey(redis_key);
 		return RedisModule_ReplyWithSimpleString(ctx, "OK");
 	}
-	
+	else if(res == SCHEMA_INDEX_NOT_EXISTS)
+    {
+        RedisModule_ReplyWithError(ctx, "Index not found");
+    }
+    
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
 }
 
@@ -127,6 +194,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         return REDISMODULE_ERR;
 
 	if(RedisModule_CreateCommand(ctx, "reji.drop", RejiDrop_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    if(RedisModule_CreateCommand(ctx, "reji.load", RejiLoadIndexes_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
 	reji_schema_init();
