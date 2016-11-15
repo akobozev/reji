@@ -5,10 +5,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <vector>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "json.h"
 
 // redis schema key
 #define REDIS_SCHEMA_KEY "REJI:SCHEMA"
@@ -31,6 +30,13 @@ typedef struct _reji_index
 	char **columns;
 } reji_index_t;
 
+typedef struct {
+	reji_index_t *index;
+	char *key;
+} reji_index_key_t;
+
+typedef std::vector<reji_index_key_t> reji_index_keys_list_t;
+
 typedef struct _reji_index_iter
 {
 	reji_index_t *index;
@@ -47,8 +53,6 @@ int reji_index_iter_start(reji_index_iter_t **iter);
 void reji_index_iter_stop(reji_index_iter_t *iter);
 int reji_index_iter_next(reji_index_iter_t *iter);
 
-#ifdef __cplusplus
-}
-#endif
+int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list);
 
 #endif //  _REJI_SCHEMA_H

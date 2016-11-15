@@ -3,8 +3,10 @@
 #include <map>
 #include "json.h"
 
-typedef std::map<char*, reji_index_t*, bool(*)(char*,char*)> IndexMap;
-typedef std::pair<char*, reji_index_t*> IndexPair;
+typedef std::map<char *, reji_index_t *, bool(*)(char *, char *)> IndexMap;
+typedef std::pair<char *, reji_index_t *> IndexPair;
+
+typedef std::map<char *, char *, bool(*)(char *,char *)> DataObjectMap;
 
 static IndexMap *g_index_map = NULL;
 
@@ -12,20 +14,15 @@ static IndexMap *g_index_map = NULL;
 #define INDEX_COLUMNS 	"columns"
 #define INDEX_UNIQUE	"unique"
 
+// forward declarations
 //============================================================
-// forward declaration
 void reji_index_release(reji_index_t *index);
-
-//============================================================
-bool indexComp(char *lhs, char *rhs)
-{
-	return (strcmp(lhs, rhs) < 0);
-}
+bool stringCompareIgnoreCase(char *lhs, char *rhs);
 
 //============================================================
 void reji_schema_init()
 {
-	g_index_map = new IndexMap(indexComp);
+	g_index_map = new IndexMap(stringCompareIgnoreCase);
 }
 
 //============================================================
@@ -118,6 +115,11 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 	}
 	while(0);
 
+	if(tok)
+	{
+		json_tokener_free(tok);
+	}
+	
 	if(res && index)
 	{
 		reji_index_release(index);
@@ -233,4 +235,10 @@ void reji_index_release(reji_index_t *index)
 		free(index->name);
 
 	free(index);
+}
+
+//============================================================
+bool stringCompareIgnoreCase(char *lhs, char *rhs)
+{
+	return (strcasecmp(lhs, rhs) < 0);
 }

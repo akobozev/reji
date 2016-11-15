@@ -13,12 +13,12 @@ else
 	SHOBJ_LDFLAGS ?= -bundle -undefined dynamic_lookup
 endif
 
+CPP = g++
 JSON_PATH = thirdparty/json-c
 JSON_LIB = $(JSON_PATH)/.libs
 CFLAGS += -I$(JSON_PATH)
 CPPFLAGS += -I$(JSON_PATH)
 SHOBJ_LDFLAGS += -L$(JSON_LIB) 
-LIBS += -ljson-c
 
 SOURCEDIR = .
 CC_SOURCES = $(wildcard $(SOURCEDIR)/*.cc)
@@ -31,16 +31,13 @@ all: reji.so
 $(JSON_LIB)/libjson-c.a:
 	cd $(JSON_PATH); ./autogen.sh; ./configure --with-pic; make; cd -
 
-.c.xo:
-	$(CC) -I. $(CFLAGS) $(SHOBJ_CFLAGS) -fPIC -c $< -o $@
-
 $(SOURCEDIR)/%.xo: $(SOURCEDIR)/%.cc
-	g++ -I. $(CPPFLAGS) $(SHOBJ_CPPFLAGS) -fPIC -c $< -o $@
+	$(CPP) -I. $(CPPFLAGS) $(SHOBJ_CPPFLAGS) -fPIC -fpermissive -c $< -o $@
 
 reji_main.xo: ../redismodule.h
 
-reji.so: $(JSON_LIB)/libjson-c.a reji_main.xo $(CC_OBJECTS)
-	g++ -shared -o $@ reji_main.xo $(CC_OBJECTS) $(JSON_LIB)/libjson-c.a $(SHOBJ_LDFLAGS) -lc -lstdc++
+reji.so: $(JSON_LIB)/libjson-c.a $(CC_OBJECTS)
+	$(CPP) -shared -o $@ $(CC_OBJECTS) $(JSON_LIB)/libjson-c.a $(SHOBJ_LDFLAGS)
 
 clean:
 	rm -rf *.xo *.so
