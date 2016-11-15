@@ -22,6 +22,55 @@ void PrintArgs(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 }
     
 //============================================================
+void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
+{
+    RedisModule_Log(ctx, "notice", "Delete index keys: start");
+    int count = 0;
+    RedisModuleCallReply *reply = NULL;
+    RedisModuleString *match = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, "%s%s*", REDIS_INDEX_KEY_PREFIX, indexName);
+    size_t cursor = 0;
+    int done = 0;
+
+    do
+    {
+        reply = RedisModule_Call(ctx, "scan", "lcs", cursor, "match", match);
+    
+        if(!reply)
+            break;
+
+        size_t reply_len = RedisModule_CallReplyLength(reply);
+
+        if(reply_len == 2)
+        {
+            RedisModuleCallReply *c = RedisModule_CallReplyArrayElement(reply, 0);
+            RedisModuleCallReply *list = RedisModule_CallReplyArrayElement(reply, 1);
+
+            cursor = RedisModule_CallReplyInteger(c);
+
+            size_t list_len = RedisModule_CallReplyLength(list);
+            for(size_t i = 0; i < list_len; i++)
+            {
+                RedisModuleCallReply *rkey = RedisModule_CallReplyArrayElement(list, i);
+                RedisModuleString *key = RedisModule_CreateStringFromCallReply(rkey);
+
+                size_t len = 0;
+                const char *data = RedisModule_StringPtrLen(key, &len);
+                RedisModule_Log(ctx, "notice", "key[%d]: %*.*s", i, len, len, data);
+            }
+        }
+
+        RedisModule_FreeCallReply(reply);
+        reply = NULL;
+        
+        if(cursor == 0)
+            done = 1;
+    }
+    while(!done);
+
+    RedisModule_Log(ctx, "notice", "Delete index keys: end[%d]", count);
+}
+    
+//============================================================
 int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
     REDISMODULE_NOT_USED(argv);
@@ -110,15 +159,19 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 		return RedisModule_WrongArity(ctx);
 
 	size_t len = 0;
-	const char *name = RedisModule_StringPtrLen(argv[1], &len);
-	
+	const char *tmp = RedisModule_StringPtrLen(argv[1], &len);
+	char *name = strndup(tmp, len);
+
+    name = reji_str_to_lower(name);
 	RedisModule_Log(ctx, "notice", "REJI: drop index: %*.*s", len, len, name);
-	int res = reji_index_drop((char*)name, len);
+	int res = reji_index_drop(name);
 
 	if(res == SCHEMA_OK)
 	{
 		RedisModuleString *index_key_string = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, REDIS_SCHEMA_KEY);
 		RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, index_key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+
+        
 		RedisModuleString *rname = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, name);
 		
 		RedisModule_HashSet(redis_key, REDISMODULE_HASH_NONE, rname, REDISMODULE_HASH_DELETE, NULL);

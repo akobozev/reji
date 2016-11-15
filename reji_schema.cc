@@ -134,12 +134,9 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 }
 
 //============================================================
-int reji_index_drop(char *indexName, size_t len)
+int reji_index_drop(char *indexName)
 {
-    char *name = strndup(indexName, len);
-    name = str_to_lower(name);
-
-	IndexMap::iterator it = g_index_map->find(name);
+    IndexMap::iterator it = g_index_map->find(indexName);
 
 	if(it != g_index_map->end())
 	{
@@ -317,6 +314,12 @@ void reji_free_index_key(reji_index_key_t &index_key)
 	if(index_key.key)
 		free((void *)index_key.key);
 }	
+
+//============================================================
+char *reji_str_to_lower(char *src)
+{
+    return str_to_lower(src);
+}
 
 //============================================================
 char *str_to_lower(char *str)
