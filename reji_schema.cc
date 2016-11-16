@@ -17,7 +17,7 @@ static IndexMap *g_index_map = NULL;
 // forward declarations
 //============================================================
 void reji_index_release(reji_index_t *index);
-bool reji_build_index_key(reji_index_t *index, JsonObjectMap obj_map, reji_index_key_t &index_key);
+bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_index_key_t &index_key);
 void reji_free_index_key(reji_index_key_t &index_key);
 char *str_to_lower(char *);
 
@@ -236,7 +236,7 @@ int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list)
 			continue;
 
 		// associate field name with string value
-		jobj_map[str_to_lower(jobj_key)] = json_object_to_json_string(jobj_val);
+		jobj_map[str_to_lower(jobj_key)] = json_object_get_string(jobj_val);
 		
 	}
 
@@ -282,7 +282,7 @@ void reji_index_release(reji_index_t *index)
 }
 
 //============================================================
-bool reji_build_index_key(reji_index_t *index, JsonObjectMap obj_map, reji_index_key_t &index_key)
+bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_index_key_t &index_key)
 {
 	bool res = true;
 	std::string key_value(REDIS_INDEX_KEY_PREFIX);
