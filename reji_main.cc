@@ -29,13 +29,17 @@ void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
     RedisModule_Log(ctx, "notice", "Delete index keys: start");
     int count = 0;
     RedisModuleCallReply *reply = NULL;
-    RedisModuleString *match = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, "%s%s*", REDIS_INDEX_KEY_PREFIX, indexName);
-    size_t cursor = 0;
+    RedisModuleString *match = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, "%s/%s*", REDIS_INDEX_KEY_PREFIX, indexName);
+    size_t cursor0_len = 1;
+    const char *cursor0 = "0";
+    RedisModuleString *cursor = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, "0");
+
     int done = 0;
 
     do
     {
-        reply = RedisModule_Call(ctx, "scan", "lcs", cursor, "match", match);
+        RedisModule_Log(ctx, "notice", "Delete index keys: cursor: %*.*s", cursor0_len, cursor0_len, cursor0);
+        reply = RedisModule_Call(ctx, "scan", "scs", cursor, "match", match);
     
         if(!reply)
             break;
@@ -47,24 +51,26 @@ void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
             RedisModuleCallReply *c = RedisModule_CallReplyArrayElement(reply, 0);
             RedisModuleCallReply *list = RedisModule_CallReplyArrayElement(reply, 1);
 
-            cursor = RedisModule_CallReplyInteger(c);
+            cursor = RedisModule_CreateStringFromCallReply(c);
+            
+            cursor0 = RedisModule_CallReplyStringPtr(c, &cursor0_len);
 
             size_t list_len = RedisModule_CallReplyLength(list);
             for(size_t i = 0; i < list_len; i++)
             {
                 RedisModuleCallReply *rkey = RedisModule_CallReplyArrayElement(list, i);
                 RedisModuleString *key = RedisModule_CreateStringFromCallReply(rkey);
-
-                size_t len = 0;
-                const char *data = RedisModule_StringPtrLen(key, &len);
-                RedisModule_Log(ctx, "notice", "key[%d]: %*.*s", i, len, len, data);
+                RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key, REDISMODULE_WRITE);
+                RedisModule_DeleteKey(redis_key);
+                RedisModule_CloseKey(redis_key);
+                count++;
             }
         }
 
         RedisModule_FreeCallReply(reply);
         reply = NULL;
         
-        if(cursor == 0)
+        if(cursor0_len == 1 && cursor0[0] == '0')
             done = 1;
     }
     while(!done);
@@ -204,6 +210,8 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 		
 		RedisModule_HashSet(redis_key, REDISMODULE_HASH_NONE, rname, REDISMODULE_HASH_DELETE, NULL);
 		RedisModule_CloseKey(redis_key);
+        DeleteAllKeys(ctx, name);
+
 		return RedisModule_ReplyWithSimpleString(ctx, "OK");
 	}
 	else if(res == SCHEMA_INDEX_NOT_EXISTS)
@@ -314,7 +322,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
     if(RedisModule_CreateCommand(ctx, "reji.load", RejiLoadIndexes_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
-	reji_schema_init();
+    reji_schema_init();
 	RedisModule_Log(ctx, "notice", "REJI loaded");
     return REDISMODULE_OK;
 }
