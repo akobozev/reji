@@ -121,14 +121,10 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 	while(0);
 
 	if(tok)
-	{
 		json_tokener_free(tok);
-	}
 	
 	if(res && index)
-	{
 		reji_index_release(index);
-	}
 	
 	return res;
 }
@@ -290,6 +286,9 @@ bool reji_build_index_key(reji_index_t *index, JsonObjectMap obj_map, reji_index
 	bool res = true;
 	std::string key_value(REDIS_INDEX_KEY_PREFIX);
 
+	key_value += REDIS_INDEX_KEY_SEPARATOR;
+	key_value += index->name;
+
 	// iterate over index fields and build a key from correspondent jobj values
 	for(int i = 0; i < index->numColumns; i++)
 	{
@@ -304,6 +303,7 @@ bool reji_build_index_key(reji_index_t *index, JsonObjectMap obj_map, reji_index
 	}
 
 	index_key.key = strdup(key_value.c_str());
+	index_key.index = index;
 	
 	return res;
 }	

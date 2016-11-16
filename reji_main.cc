@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <string.h>
 
+#include <string>
+
 #include "json.h"
 #include "reji_schema.h"
 
@@ -20,7 +22,7 @@ void PrintArgs(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         RedisModule_Log(ctx, "notice", "argv[%d]: %*.*s", i, len, len, data);
     }
 }
-    
+
 //============================================================
 void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
 {
@@ -69,7 +71,33 @@ void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
 
     RedisModule_Log(ctx, "notice", "Delete index keys: end[%d]", count);
 }
-    
+
+//============================================================
+bool IsRedisReplyIntOK(RedisModuleCallReply *reply, long long expected_value)
+{
+	bool res = reply && RedisModule_CallReplyType(reply) == REDISMODULE_REPLY_INTEGER;
+
+	if(res)
+		res = RedisModule_CallReplyInteger(reply) == expected_value;
+	
+	return res;
+}
+
+//============================================================
+bool IsRedisReplyStringOK(RedisModuleCallReply *reply, const char *expected_value)
+{
+	bool res = reply && RedisModule_CallReplyType(reply) == REDISMODULE_REPLY_STRING;
+
+	if(res)
+	{
+		size_t str_len = 0;
+		const char *str_val = RedisModule_CallReplyProto(reply, &str_len);
+		res = strncmp(str_val, expected_value, str_len) == 0;
+	}
+	
+	return res;
+}
+
 //============================================================
 int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
@@ -186,7 +214,6 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
 }
 
-
 /* REJI.PUT <key> <json_object> -- adds a record to Redis store and indexes it */
 int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
@@ -201,33 +228,68 @@ int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 	
 	size_t json_data_len = 0;
 	const char *json_data = RedisModule_StringPtrLen(argv[2], &json_data_len);
+
 	struct json_object *jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
 
-	// index by "name" field
-	if(jobj)
+	RedisModuleCallReply *reply = NULL;
+	int ret_code = REDISMODULE_OK;
+	bool is_transact = false;
+	
+	do
 	{
-		reji_index_keys_list_t list;
-		reji_build_index_keys(jobj, list);
-		
-		json_object_object_foreach(jobj, key, val)
+		if(jobj)
 		{
-			if(strcmp(key, "name") == 0)
+			reji_index_keys_list_t keys_list;
+			reji_build_index_keys(jobj, keys_list);
+
+			is_transact = !keys_list.empty();
+			
+			// if there keys to create, open transaction
+			//if(is_transact)
+			//{
+			//	reply = RedisModule_Call(ctx, "MULTI", "");
+			//	if(REDIS_CALL_FAILED(reply))
+			//		break;
+			//}
+
+			for(reji_index_keys_list_t::iterator keys_it = keys_list.begin(); keys_it != keys_list.end(); ++keys_it)
 			{
-				RedisModuleString *index_key_string = RedisModule_CreateStringPrintf(ctx, "REJI:IDX:%s", json_object_to_json_string(val));
-				RedisModuleKey *redis_key = RedisModule_OpenKey(ctx, index_key_string, REDISMODULE_READ | REDISMODULE_WRITE);
-				RedisModule_StringSet(redis_key, argv[1]);
-				RedisModule_CloseKey(redis_key);
-				
-				return RedisModule_ReplyWithSimpleString(ctx, "OK");
+				reji_index_key_t index_key = *keys_it;
+
+				reply = RedisModule_Call(ctx, "SETNX", "cs", index_key.key, argv[1]);
+				if(IsRedisReplyIntOK(reply, 0))
+				{
+					std::string error_str("Unique index violation: ");
+					error_str += index_key.index->name;
+					ret_code = RedisModule_ReplyWithError(ctx, error_str.c_str());
+
+					reply = NULL;
+					
+					break;
+				}
 			}
+
+			//if(is_transact && REDIS_CALL_FAILED(reply))
+			//	break;
+
+			reply = RedisModule_Call(ctx, "SETNX", "ss", argv[1], argv[2]);
+			if(IsRedisReplyIntOK(reply, 0))
+				break;
+
+			//			if(is_transact)
+			//	reply = RedisModule_Call(ctx, "EXEC", "");
 		}
-		
-		return RedisModule_ReplyWithLongLong(ctx, rand());
-	}
-	
-	
-	
-	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+	} while(0);	
+
+	// rollback if something went sideways
+	//if(REDIS_CALL_FAILED(reply))
+	//	RedisModule_Call(ctx, "DISCARD", "");
+
+	// cleanup
+	if(tok)
+		json_tokener_free(tok);
+
+	return reply == NULL ? ret_code : RedisModule_ReplyWithCallReply(ctx, reply);
 }
 
 /* This function must be present on each Redis module. It is used in order to
@@ -240,13 +302,13 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
     if(RedisModule_Init(ctx, "reji", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
 		return REDISMODULE_ERR;
 	
-    if(RedisModule_CreateCommand(ctx, "reji.put", RejiPut_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
+    if(RedisModule_CreateCommand(ctx, "reji.put", RejiPut_RedisCommand, "write fast", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
-	if(RedisModule_CreateCommand(ctx, "reji.create", RejiCreate_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
+	if(RedisModule_CreateCommand(ctx, "reji.create", RejiCreate_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
-	if(RedisModule_CreateCommand(ctx, "reji.drop", RejiDrop_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
+	if(RedisModule_CreateCommand(ctx, "reji.drop", RejiDrop_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     if(RedisModule_CreateCommand(ctx, "reji.load", RejiLoadIndexes_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
