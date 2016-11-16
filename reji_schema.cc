@@ -1,5 +1,6 @@
 
 #include "reji_schema.h"
+#include <string>
 #include <unordered_map>
 #include "json.h"
 

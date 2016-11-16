@@ -10,7 +10,7 @@ ifeq ($(uname_S),Linux)
 else
 	SHOBJ_CFLAGS ?= -W -Wall -dynamic -fno-common -g -ggdb -std=c99 -O2
 	SHOBJ_CPPFLAGS ?= -W -Wall -dynamic -fno-common -g -ggdb -O2
-	SHOBJ_LDFLAGS ?= -bundle -undefined dynamic_lookup
+	SHOBJ_LDFLAGS ?= -undefined dynamic_lookup
 endif
 
 CPP = g++
