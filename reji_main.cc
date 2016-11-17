@@ -9,6 +9,16 @@
 #include "json.h"
 #include "reji_schema.h"
 
+static bool g_indexes_loaded = false;
+
+#define CHECK_SCHEMA_LOADED(ctx) \
+    { \
+        if(!g_indexes_loaded) { \
+            if(RejiLoadIndexes(ctx)) RedisModule_ReplyWithError(ctx, "Failed to load indexes"); \
+            g_indexes_loaded = true;\
+        } \
+    }
+
 extern "C" {
 #include "../redismodule.h"
 
@@ -79,18 +89,14 @@ void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
 }
 
 //============================================================
-int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+int RejiLoadIndexes(RedisModuleCtx *ctx)
 {
-    REDISMODULE_NOT_USED(argv);
-    REDISMODULE_NOT_USED(argc);
-	RedisModule_AutoMemory(ctx);
-
     RedisModule_Log(ctx, "notice", "Start load indexes");
     RedisModuleString *index_key_string = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, REDIS_SCHEMA_KEY);
     RedisModuleCallReply *reply = RedisModule_Call(ctx, "hgetall", "s", index_key_string);
     
     if(!reply)
-        return RedisModule_ReplyWithSimpleString(ctx, "OK");
+        return 0;
 
     size_t reply_len = RedisModule_CallReplyLength(reply);
     RedisModule_Log(ctx, "notice", "Num of indexes: %d", reply_len/2);
@@ -123,7 +129,7 @@ int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
     }
     
     RedisModule_FreeCallReply(reply);
-	return RedisModule_ReplyWithSimpleString(ctx, "OK");//0;
+	return 0;
 }
 
 //============================================================
@@ -133,6 +139,8 @@ int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 
     if (argc != 2)
 		return RedisModule_WrongArity(ctx);
+
+    CHECK_SCHEMA_LOADED(ctx);
 
 	size_t json_data_len = 0;
 	const char *json_data = RedisModule_StringPtrLen(argv[1], &json_data_len);
@@ -165,6 +173,8 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
     
     if (argc != 2)
 		return RedisModule_WrongArity(ctx);
+
+    CHECK_SCHEMA_LOADED(ctx);
 
 	size_t len = 0;
 	const char *tmp = RedisModule_StringPtrLen(argv[1], &len);
@@ -202,6 +212,8 @@ int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 
 	if (argc != 3)
 		return RedisModule_WrongArity(ctx);
+
+    CHECK_SCHEMA_LOADED(ctx);
 
 	// try to parse the record first
 	struct json_tokener* tok = json_tokener_new();
@@ -299,9 +311,6 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         return REDISMODULE_ERR;
 
 	if(RedisModule_CreateCommand(ctx, "reji.drop", RejiDrop_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)
-        return REDISMODULE_ERR;
-
-    if(RedisModule_CreateCommand(ctx, "reji.load", RejiLoadIndexes_RedisCommand, "", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     reji_schema_init();
