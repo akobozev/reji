@@ -236,7 +236,7 @@ int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list)
 			continue;
 
 		// associate field name with string value
-		jobj_map[str_to_lower(jobj_key)] = json_object_to_json_string(jobj_val);
+		jobj_map[str_to_lower(jobj_key)] = json_object_get_string(jobj_val);
 		
 	}
 

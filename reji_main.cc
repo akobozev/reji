@@ -79,32 +79,6 @@ void DeleteAllKeys(RedisModuleCtx *ctx, char *indexName)
 }
 
 //============================================================
-bool IsRedisReplyIntOK(RedisModuleCallReply *reply, long long expected_value)
-{
-	bool res = reply && RedisModule_CallReplyType(reply) == REDISMODULE_REPLY_INTEGER;
-
-	if(res)
-		res = RedisModule_CallReplyInteger(reply) == expected_value;
-	
-	return res;
-}
-
-//============================================================
-bool IsRedisReplyStringOK(RedisModuleCallReply *reply, const char *expected_value)
-{
-	bool res = reply && RedisModule_CallReplyType(reply) == REDISMODULE_REPLY_STRING;
-
-	if(res)
-	{
-		size_t str_len = 0;
-		const char *str_val = RedisModule_CallReplyProto(reply, &str_len);
-		res = strncmp(str_val, expected_value, str_len) == 0;
-	}
-	
-	return res;
-}
-
-//============================================================
 int RejiLoadIndexes_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
     REDISMODULE_NOT_USED(argv);
@@ -204,7 +178,6 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 	{
 		RedisModuleString *index_key_string = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, REDIS_SCHEMA_KEY);
 		RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, index_key_string, REDISMODULE_READ | REDISMODULE_WRITE);
-
         
 		RedisModuleString *rname = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, name);
 		
@@ -239,65 +212,74 @@ int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 
 	struct json_object *jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
 
-	RedisModuleCallReply *reply = NULL;
 	int ret_code = REDISMODULE_OK;
-	bool is_transact = false;
 	
 	do
 	{
+		// index the record if json parsing succeeded
 		if(jobj)
 		{
 			reji_index_keys_list_t keys_list;
 			reji_build_index_keys(jobj, keys_list);
 
-			is_transact = !keys_list.empty();
-			
-			// if there keys to create, open transaction
-			//if(is_transact)
-			//{
-			//	reply = RedisModule_Call(ctx, "MULTI", "");
-			//	if(REDIS_CALL_FAILED(reply))
-			//		break;
-			//}
+			std::vector<RedisModuleKey *> records_list;
 
-			for(reji_index_keys_list_t::iterator keys_it = keys_list.begin(); keys_it != keys_list.end(); ++keys_it)
+			// try to index the user data first
+			RedisModuleKey *user_data_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
+			if(RedisModule_KeyType(user_data_redis_key) == REDISMODULE_KEYTYPE_EMPTY)
+			{
+				RedisModule_StringSet(user_data_redis_key, argv[1]);
+				records_list.push_back(user_data_redis_key);
+			}
+			else
+			{
+				// user key exists - bail out
+				RedisModule_ReplyWithError(ctx, "Key is not unique");
+				RedisModule_CloseKey(user_data_redis_key);
+
+				ret_code = REDISMODULE_ERR;
+			}
+			
+			for(reji_index_keys_list_t::iterator keys_it = keys_list.begin(); ret_code == REDISMODULE_OK && keys_it != keys_list.end(); ++keys_it)
 			{
 				reji_index_key_t index_key = *keys_it;
 
-				reply = RedisModule_Call(ctx, "SETNX", "cs", index_key.key, argv[1]);
-				if(IsRedisReplyIntOK(reply, 0))
+				RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
+				RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+				if(RedisModule_KeyType(redis_key) == REDISMODULE_KEYTYPE_EMPTY)
 				{
+					RedisModule_StringSet(redis_key, argv[1]);
+					records_list.push_back(redis_key);
+				}
+				else
+				{
+					// key exists - unique index violation
 					std::string error_str("Unique index violation: ");
 					error_str += index_key.index->name;
-					ret_code = RedisModule_ReplyWithError(ctx, error_str.c_str());
 
-					reply = NULL;
-					
-					break;
+					RedisModule_ReplyWithError(ctx, error_str.c_str());
+					RedisModule_CloseKey(redis_key);
+
+					ret_code = REDISMODULE_ERR;
 				}
 			}
 
-			//if(is_transact && REDIS_CALL_FAILED(reply))
-			//	break;
+			// delete the index keys in case of violation and close them
+			for(std::vector<RedisModuleKey *>::iterator key_it = records_list.begin(); key_it != records_list.end(); ++key_it)
+			{
+				if(ret_code == REDISMODULE_ERR)
+					RedisModule_DeleteKey(*key_it);
 
-			reply = RedisModule_Call(ctx, "SETNX", "ss", argv[1], argv[2]);
-			if(IsRedisReplyIntOK(reply, 0))
-				break;
-
-			//			if(is_transact)
-			//	reply = RedisModule_Call(ctx, "EXEC", "");
+				RedisModule_CloseKey(*key_it);
+			}
 		}
 	} while(0);	
-
-	// rollback if something went sideways
-	//if(REDIS_CALL_FAILED(reply))
-	//	RedisModule_Call(ctx, "DISCARD", "");
 
 	// cleanup
 	if(tok)
 		json_tokener_free(tok);
 
-	return reply == NULL ? ret_code : RedisModule_ReplyWithCallReply(ctx, reply);
+	return ret_code == REDISMODULE_OK ? RedisModule_ReplyWithSimpleString(ctx, "OK") : REDISMODULE_OK;
 }
 
 /* This function must be present on each Redis module. It is used in order to
