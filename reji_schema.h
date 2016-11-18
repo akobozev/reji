@@ -43,7 +43,7 @@ typedef struct
 	const char *key;
 } reji_index_key_t;
 
-typedef std::vector<reji_index_key_t> reji_index_keys_list_t;
+typedef std::unordered_map<std::string, reji_index_key_t> reji_index_keys_map_t;
 
 typedef struct _reji_index_iter
 {
@@ -70,9 +70,10 @@ int reji_index_iter_start(reji_index_iter_t **iter);
 void reji_index_iter_stop(reji_index_iter_t *iter);
 int reji_index_iter_next(reji_index_iter_t *iter);
 
-int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list);
-void reji_free_index_keys(reji_index_keys_list_t &keys_list);
 bool reji_build_key(reji_index_t *index, IndexValMap& obj_map, std::string& key);
+int reji_build_index_keys(json_object *jobj, reji_index_keys_map_t& keys_map);
+void reji_free_index_keys(reji_index_keys_map_t& keys_map);
+void reji_free_index_key(reji_index_key_t& index_key);
 
 char *reji_str_to_lower(char *src);
 void reji_string_to_lower(std::string& src);
