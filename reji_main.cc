@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <string>
+#include <vector>
 
 #include "json.h"
 #include "reji_schema.h"
@@ -133,6 +134,174 @@ int RejiLoadIndexes(RedisModuleCtx *ctx)
 }
 
 //============================================================
+struct json_object *RejiParseJSON(const char *data, size_t len)
+{
+	struct json_tokener* tok = json_tokener_new();
+	json_tokener_set_flags(tok, 0);
+	
+	struct json_object *jobj = json_tokener_parse_ex(tok, data, len);
+	json_tokener_free(tok);
+
+	return jobj;
+}
+	
+//============================================================
+int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
+{
+	RedisModule_AutoMemory(ctx);
+
+	if (argc != 3)
+		return RedisModule_WrongArity(ctx);
+
+    CHECK_SCHEMA_LOADED(ctx);
+
+	// try to parse the record first
+	size_t json_data_len = 0;
+	const char *json_data = RedisModule_StringPtrLen(argv[2], &json_data_len);
+	struct json_object *jobj = RejiParseJSON(json_data,json_data_len);
+
+	int ret_code = REDISMODULE_OK;
+	
+	do
+	{
+		// index the record if json parsing succeeded
+		if(jobj)
+		{
+			std::vector<RedisModuleKey *> records_list;
+			reji_index_keys_map_t keys_map;
+			reji_index_keys_map_t existing_keys_map;
+
+			bool update_mode = false;
+			
+			reji_build_index_keys(jobj, keys_map);
+
+			// try to insert the user data first
+			RedisModuleKey *user_data_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
+			if(RedisModule_KeyType(user_data_redis_key) == REDISMODULE_KEYTYPE_EMPTY)
+			{
+				RedisModule_StringSet(user_data_redis_key, argv[2]);
+				records_list.push_back(user_data_redis_key);
+			}
+			// fail on existing user key in NX mode
+			else if(nx)
+			{
+				// user key exists - bail out
+				RedisModule_ReplyWithError(ctx, "Key is not unique");
+				RedisModule_CloseKey(user_data_redis_key);
+
+				ret_code = REDISMODULE_ERR;
+			}
+			// update record: parse existing record and build keys for further processing
+			else if(RedisModule_KeyType(user_data_redis_key) == REDISMODULE_KEYTYPE_STRING)
+			{
+				size_t existing_json_data_len = 0;
+				char *existing_json_data = RedisModule_StringDMA(user_data_redis_key, &existing_json_data_len, REDISMODULE_READ);
+				struct json_object *existing_jobj = RejiParseJSON(existing_json_data, existing_json_data_len);
+
+				if(existing_jobj)
+				{
+					reji_build_index_keys(existing_jobj, existing_keys_map);
+					update_mode = true;
+				}
+				else
+				{
+					RedisModule_ReplyWithError(ctx, "Can't update record: existing data is not in JSON format");
+					RedisModule_CloseKey(user_data_redis_key);
+
+					ret_code = REDISMODULE_ERR;
+				}
+			}
+			// fail on non-string data
+			else
+			{
+				RedisModule_ReplyWithError(ctx, "Can't update record: existing data is not a string");
+				RedisModule_CloseKey(user_data_redis_key);
+
+				ret_code = REDISMODULE_ERR;
+			}
+			
+			for(reji_index_keys_map_t::iterator keys_it = keys_map.begin(); ret_code == REDISMODULE_OK && keys_it != keys_map.end(); ++keys_it)
+			{
+				reji_index_key_t &index_key = keys_it->second;
+
+				// ignore existing keys while updating record
+				if(update_mode)
+				{
+					reji_index_keys_map_t::iterator existing_key_it = existing_keys_map.find(index_key.key);
+					if(existing_key_it != existing_keys_map.end())
+					{
+						// remove existing key from map for further insertion
+						reji_index_key_t &key = existing_key_it->second;
+						existing_keys_map.erase(existing_key_it);
+						reji_free_index_key(key);
+						
+						continue;
+					}
+				}
+				
+				RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
+				RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+				if(RedisModule_KeyType(redis_key) == REDISMODULE_KEYTYPE_EMPTY)
+				{
+					RedisModule_StringSet(redis_key, argv[1]);
+					records_list.push_back(redis_key);
+				}
+				else
+				{
+					// key exists - unique index violation
+					std::string error_str("Unique index violation: ");
+					error_str += index_key.index->name;
+
+					RedisModule_ReplyWithError(ctx, error_str.c_str());
+					RedisModule_CloseKey(redis_key);
+
+					ret_code = REDISMODULE_ERR;
+				}
+			}
+
+			// delete the index keys in case of violation and close them
+			for(std::vector<RedisModuleKey *>::iterator key_it = records_list.begin(); key_it != records_list.end(); ++key_it)
+			{
+				if(ret_code == REDISMODULE_ERR)
+					RedisModule_DeleteKey(*key_it);
+
+				RedisModule_CloseKey(*key_it);
+			}
+
+			reji_free_index_keys(keys_map);
+
+			if(update_mode)
+			{
+				// update user record if no violation detected and delete existing keys that are not relevant after update
+				if(ret_code == REDISMODULE_OK)
+				{
+					RedisModule_StringSet(user_data_redis_key, argv[2]);
+					RedisModule_CloseKey(user_data_redis_key);
+
+					for(reji_index_keys_map_t::iterator keys_it = keys_map.begin(); keys_it != keys_map.end(); ++keys_it)
+					{
+						reji_index_key_t &index_key = keys_it->second;
+						RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
+						RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+
+						RedisModule_DeleteKey(redis_key);
+						RedisModule_CloseKey(redis_key);
+					}
+				}
+
+				reji_free_index_keys(existing_keys_map);
+			}
+		}
+	} while(0);	
+
+	// cleanup
+	if(jobj)
+		json_object_put(jobj);
+	
+	return ret_code == REDISMODULE_OK ? RedisModule_ReplyWithSimpleString(ctx, "OK") : REDISMODULE_OK;
+}
+
+//============================================================
 int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
 	RedisModule_AutoMemory(ctx);
@@ -205,97 +374,23 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
 }
 
-/* REJI.PUT <key> <json_object> -- adds a record to Redis store and indexes it */
+/* REJI.PUT <key> <json_object> -- adds a record to Redis store and indexes it overwriting the existing one */
+//============================================================
 int RejiPut_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
-	RedisModule_AutoMemory(ctx);
+	return RejiPut(ctx, argv, argc, false);
+}
 
-	if (argc != 3)
-		return RedisModule_WrongArity(ctx);
-
-    CHECK_SCHEMA_LOADED(ctx);
-
-	// try to parse the record first
-	struct json_tokener* tok = json_tokener_new();
-	json_tokener_set_flags(tok, 0);
-	
-	size_t json_data_len = 0;
-	const char *json_data = RedisModule_StringPtrLen(argv[2], &json_data_len);
-
-	struct json_object *jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
-
-	int ret_code = REDISMODULE_OK;
-	
-	do
-	{
-		// index the record if json parsing succeeded
-		if(jobj)
-		{
-			reji_index_keys_list_t keys_list;
-			reji_build_index_keys(jobj, keys_list);
-
-			std::vector<RedisModuleKey *> records_list;
-
-			// try to index the user data first
-			RedisModuleKey *user_data_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
-			if(RedisModule_KeyType(user_data_redis_key) == REDISMODULE_KEYTYPE_EMPTY)
-			{
-				RedisModule_StringSet(user_data_redis_key, argv[1]);
-				records_list.push_back(user_data_redis_key);
-			}
-			else
-			{
-				// user key exists - bail out
-				RedisModule_ReplyWithError(ctx, "Key is not unique");
-				RedisModule_CloseKey(user_data_redis_key);
-
-				ret_code = REDISMODULE_ERR;
-			}
-			
-			for(reji_index_keys_list_t::iterator keys_it = keys_list.begin(); ret_code == REDISMODULE_OK && keys_it != keys_list.end(); ++keys_it)
-			{
-				reji_index_key_t index_key = *keys_it;
-
-				RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
-				RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
-				if(RedisModule_KeyType(redis_key) == REDISMODULE_KEYTYPE_EMPTY)
-				{
-					RedisModule_StringSet(redis_key, argv[1]);
-					records_list.push_back(redis_key);
-				}
-				else
-				{
-					// key exists - unique index violation
-					std::string error_str("Unique index violation: ");
-					error_str += index_key.index->name;
-
-					RedisModule_ReplyWithError(ctx, error_str.c_str());
-					RedisModule_CloseKey(redis_key);
-
-					ret_code = REDISMODULE_ERR;
-				}
-			}
-
-			// delete the index keys in case of violation and close them
-			for(std::vector<RedisModuleKey *>::iterator key_it = records_list.begin(); key_it != records_list.end(); ++key_it)
-			{
-				if(ret_code == REDISMODULE_ERR)
-					RedisModule_DeleteKey(*key_it);
-
-				RedisModule_CloseKey(*key_it);
-			}
-		}
-	} while(0);	
-
-	// cleanup
-	if(tok)
-		json_tokener_free(tok);
-
-	return ret_code == REDISMODULE_OK ? RedisModule_ReplyWithSimpleString(ctx, "OK") : REDISMODULE_OK;
+/* REJI.PUTNX <key> <json_object> -- adds a record to Redis store and indexes it failing on the existing one */
+//============================================================
+int RejiPutNX_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+	return RejiPut(ctx, argv, argc, true);
 }
 
 /* This function must be present on each Redis module. It is used in order to
  * register the commands into the Redis server. */
+//============================================================
 int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
     REDISMODULE_NOT_USED(argv);
@@ -305,6 +400,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 		return REDISMODULE_ERR;
 	
     if(RedisModule_CreateCommand(ctx, "reji.put", RejiPut_RedisCommand, "write fast", 0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    if(RedisModule_CreateCommand(ctx, "reji.putnx", RejiPutNX_RedisCommand, "write fast", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
 	if(RedisModule_CreateCommand(ctx, "reji.create", RejiCreate_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)

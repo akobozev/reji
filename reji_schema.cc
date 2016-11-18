@@ -18,7 +18,6 @@ static IndexMap *g_index_map = NULL;
 //============================================================
 void reji_index_release(reji_index_t *index);
 bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_index_key_t &index_key);
-void reji_free_index_key(reji_index_key_t &index_key);
 char *str_to_lower(char *);
 
 //============================================================
@@ -220,7 +219,7 @@ int reji_index_next(reji_index_iter_t *iter)
 }
 
 //============================================================
-int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list)
+int reji_build_index_keys(json_object *jobj, reji_index_keys_map_t& keys_map)
 {
 	int res = INDEX_OK;
 
@@ -247,17 +246,17 @@ int reji_build_index_keys(json_object *jobj, reji_index_keys_list_t &keys_list)
 
 		// TODO: check return value (?)
 		reji_build_index_key(idx_it->second, jobj_map, index_key);
-		keys_list.push_back(index_key);
+		keys_map[index_key.key] = index_key;
 	}
 	
 	return res;
 }	
 
 //============================================================
-void reji_free_index_keys(reji_index_keys_list_t &keys_list)
+void reji_free_index_keys(reji_index_keys_map_t& keys_map)
 {
-	for(reji_index_keys_list_t::iterator it = keys_list.begin(); it != keys_list.end(); ++it)
-		reji_free_index_key(*it);
+	for(reji_index_keys_map_t::iterator it = keys_map.begin(); it != keys_map.end(); ++it)
+		reji_free_index_key(it->second);
 }
 
 // PRIVATE
@@ -282,7 +281,7 @@ void reji_index_release(reji_index_t *index)
 }
 
 //============================================================
-bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_index_key_t &index_key)
+bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_index_key_t& index_key)
 {
 	bool res = true;
 	std::string key_value(REDIS_INDEX_KEY_PREFIX);
@@ -310,7 +309,7 @@ bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_inde
 }	
 
 //============================================================
-void reji_free_index_key(reji_index_key_t &index_key)
+void reji_free_index_key(reji_index_key_t& index_key)
 {
 	if(index_key.key)
 		free((void *)index_key.key);
