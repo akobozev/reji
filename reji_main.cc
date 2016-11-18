@@ -407,7 +407,7 @@ int RejiGet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 	int res = reji_index_get(name, name_len, &index);
 
 	if(res != SCHEMA_OK)
-		RedisModule_ReplyWithError(ctx, "Index not found");
+		return RedisModule_ReplyWithError(ctx, "Index not found");
 
 	// build value map
 	size_t col_len = 0;
