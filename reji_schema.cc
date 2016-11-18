@@ -1,8 +1,5 @@
 
 #include "reji_schema.h"
-#include <string>
-#include <unordered_map>
-#include "json.h"
 
 typedef std::unordered_map<std::string, reji_index_t *> IndexMap;
 typedef std::pair<std::string, reji_index_t *> IndexPair;
@@ -147,7 +144,7 @@ int reji_index_drop(char *indexName)
 }
 
 //============================================================
-int reji_index_get(char *indexName, size_t len, reji_index_t **index)
+int reji_index_get(const char *indexName, size_t len, reji_index_t **index)
 {
     char *name = strndup(indexName, len);
     name = str_to_lower(name);
@@ -260,6 +257,43 @@ void reji_free_index_keys(reji_index_keys_list_t &keys_list)
 		reji_free_index_key(*it);
 }
 
+//============================================================
+void reji_string_to_lower(std::string& src)
+{
+	for(size_t i = 0; i < src.length(); i++)
+	{
+		src[i] = tolower(src[i]);
+	}
+}
+
+//============================================================
+bool reji_build_key(reji_index_t *index, IndexValMap& obj_map, std::string& key)
+{
+	bool res = true;
+	key += REDIS_INDEX_KEY_PREFIX;
+
+	key += REDIS_INDEX_KEY_SEPARATOR;
+	key += index->name;
+
+	// iterate over index fields and build a key from correspondent jobj values
+	for(int i = 0; i < index->numColumns; i++)
+	{
+		IndexValMap::iterator it = obj_map.find(index->columns[i]);
+
+		key += REDIS_INDEX_KEY_SEPARATOR;
+		
+		if(it != obj_map.end())
+			key.append(it->second->val, it->second->val_len);
+		else
+		{
+			res = false;
+			break;
+		}
+	}
+
+	return res;
+}	
+
 // PRIVATE
 //============================================================
 void reji_index_release(reji_index_t *index)
@@ -329,4 +363,3 @@ char *str_to_lower(char *str)
 	for(; *str; ++str) *str = tolower(*str);
 	return res;
 }
-
