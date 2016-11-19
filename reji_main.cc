@@ -23,6 +23,8 @@ static bool g_indexes_loaded = false;
 extern "C" {
 #include "../redismodule.h"
 
+typedef std::vector<std::pair<RedisModuleKey *, reji_index_t *> > RedisKeyIndexVector;
+
 //============================================================
 void PrintArgs(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
@@ -167,7 +169,7 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 		// index the record if json parsing succeeded
 		if(jobj)
 		{
-			std::vector<RedisModuleKey *> records_list;
+			RedisKeyIndexVector records_list;
 			reji_index_keys_map_t keys_map;
 			reji_index_keys_map_t existing_keys_map;
 
@@ -180,7 +182,7 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 			if(RedisModule_KeyType(user_data_redis_key) == REDISMODULE_KEYTYPE_EMPTY)
 			{
 				RedisModule_StringSet(user_data_redis_key, argv[2]);
-				records_list.push_back(user_data_redis_key);
+				records_list.push_back(std::make_pair(user_data_redis_key, (reji_index_t *)NULL));
 			}
 			// fail on existing user key in NX mode
 			else if(nx)
@@ -241,10 +243,37 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 				
 				RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
 				RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+				int redis_key_type = RedisModule_KeyType(redis_key);
+				
 				if(RedisModule_KeyType(redis_key) == REDISMODULE_KEYTYPE_EMPTY)
 				{
-					RedisModule_StringSet(redis_key, argv[1]);
-					records_list.push_back(redis_key);
+					// handle unique/non-unique index cases here
+					if(IS_UNIQUE(index_key.index))
+						RedisModule_StringSet(redis_key, argv[1]);
+					else
+						RedisModule_ZsetAdd(redis_key, 0, argv[1], NULL);
+
+					records_list.push_back(std::make_pair(redis_key, index_key.index));
+				}
+				else if(!IS_UNIQUE(index_key.index))
+				{
+					// make sure the record is ZSET and fail if not
+					if(redis_key_type == REDISMODULE_KEYTYPE_ZSET)
+					{
+						// add the primary key to the non-unique index keys set
+						RedisModule_ZsetAdd(redis_key, 0, argv[1], NULL);
+						records_list.push_back(std::make_pair(redis_key, index_key.index));
+					}
+					else
+					{
+						std::string error_str("Non-unique index record has wrong type: ");
+						error_str += index_key.index->name;
+
+						RedisModule_ReplyWithError(ctx, error_str.c_str());
+						RedisModule_CloseKey(redis_key);
+
+						ret_code = REDISMODULE_ERR;
+					}
 				}
 				else
 				{
@@ -260,12 +289,18 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 			}
 
 			// delete the index keys in case of violation and close them
-			for(std::vector<RedisModuleKey *>::iterator key_it = records_list.begin(); key_it != records_list.end(); ++key_it)
+			for(RedisKeyIndexVector::iterator key_it = records_list.begin(); key_it != records_list.end(); ++key_it)
 			{
 				if(ret_code == REDISMODULE_ERR)
-					RedisModule_DeleteKey(*key_it);
-
-				RedisModule_CloseKey(*key_it);
+				{
+					// remove the key from the set for non-unique index
+					if(key_it->second != NULL && !IS_UNIQUE(key_it->second))
+						RedisModule_ZsetRem(key_it->first, argv[1], NULL);
+					else
+						RedisModule_DeleteKey(key_it->first);
+				}
+				
+				RedisModule_CloseKey(key_it->first);
 			}
 
 			reji_free_index_keys(keys_map);
@@ -351,6 +386,7 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 	RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ);
 	int key_type = RedisModule_KeyType(redis_key);
 	long arr_len = 0;
+
 	if(key_type == REDISMODULE_KEYTYPE_STRING)
 	{
 		size_t pk_len = 0;
@@ -366,6 +402,7 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 		{
 			RedisModuleString *pk_string = RedisModule_CreateString(ctx, pk_data, pk_len);
 			RedisModuleKey *pk_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, pk_string, REDISMODULE_READ);
+
 			if(RedisModule_KeyType(pk_key) != REDISMODULE_KEYTYPE_EMPTY)
 			{
 				size_t pk_row_len = 0;
@@ -376,12 +413,48 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 				RedisModule_ReplyWithArray(ctx, 1);
 				RedisModule_ReplyWithStringBuffer(ctx, pk_row_data, pk_row_len);
 			}
+			
 			RedisModule_CloseKey(pk_key);
 		}
 	}
-	else if(key_type == REDISMODULE_KEYTYPE_HASH)
+	else if(key_type == REDISMODULE_KEYTYPE_ZSET)
 	{
+		RedisModuleString *min_lex = RedisModule_CreateString(ctx, "-", 1);
+		RedisModuleString *max_lex = RedisModule_CreateString(ctx, "+", 1);
 
+		if(RedisModule_ZsetFirstInLexRange(redis_key, min_lex, max_lex) == REDISMODULE_OK)
+		{
+			RedisModule_ReplyWithArray(ctx,	REDISMODULE_POSTPONED_ARRAY_LEN);
+			
+			do
+			{
+				RedisModuleString *pk_string = RedisModule_ZsetRangeCurrentElement(redis_key, NULL);
+				
+				if(keysOnly)
+				{
+					++arr_len;
+					RedisModule_ReplyWithString(ctx, pk_string);	
+				}
+				else
+				{
+					RedisModuleKey *pk_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, pk_string, REDISMODULE_READ);
+
+					if(RedisModule_KeyType(pk_redis_key) != REDISMODULE_KEYTYPE_EMPTY)
+					{
+						size_t pk_row_len = 0;
+						const char *pk_row_data = RedisModule_StringDMA(pk_redis_key, &pk_row_len, REDISMODULE_READ);
+
+						++arr_len;
+						RedisModule_ReplyWithStringBuffer(ctx, pk_row_data, pk_row_len);
+					}
+			
+					RedisModule_CloseKey(pk_redis_key);
+				}
+
+			} while(RedisModule_ZsetRangeNext(redis_key)); 
+
+			RedisModule_ReplySetArrayLength(ctx, arr_len);
+		}
 	}
 	
 	// cleanup

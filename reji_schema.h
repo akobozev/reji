@@ -19,6 +19,8 @@
 #define REJI_INDEX_UNIQUE 	0x1
 #define REJI_INDEX_CASE		0x2
 
+#define IS_UNIQUE(x) (x->flags & REJI_INDEX_UNIQUE)
+
 // schema status codes
 #define SCHEMA_OK 0
 #define SCHEMA_FAIL 1
