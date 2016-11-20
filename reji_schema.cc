@@ -50,12 +50,14 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 	reji_index_t *index = NULL;
 
     struct json_tokener* tok = json_tokener_new();
+    struct json_object *jobj = NULL;
+
     json_tokener_set_flags(tok, 0);
 
 	do
 	{
 		// try to parse the record first
-		struct json_object *jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
+		jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
 
 		//printf("index start parsing\n");
 		if(jobj)
@@ -116,6 +118,10 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 		}
 	}
 	while(0);
+
+
+    if(jobj)
+        json_object_put(jobj);
 
 	if(tok)
 		json_tokener_free(tok);

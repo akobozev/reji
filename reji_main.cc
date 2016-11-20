@@ -337,6 +337,68 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 }
 
 //============================================================
+bool RejiOpenKeyByIndex(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int flags, RedisModuleKey*& key_out, std::string& errmsg)
+{
+    bool ret = false;
+    size_t name_len = 0;
+	const char *name = RedisModule_StringPtrLen(argv[1], &name_len);
+
+	IndexValMap val_map;
+	reji_index_t *index = NULL;
+	int res = reji_index_get(name, name_len, &index);
+
+	if(res != SCHEMA_OK)
+    {
+        errmsg.assign("Index not found");
+        return ret;
+    }
+    
+	// build value map
+	size_t col_len = 0;
+	const char *col = NULL;
+	
+	reji_index_val_t *col_val_arr = new reji_index_val_t[argc-2];
+
+    do
+    {
+        for(int i = 2, j = 0; i < argc; i += 2, j++)
+        {
+            col = RedisModule_StringPtrLen(argv[i], &col_len);
+            col_val_arr[j].val = RedisModule_StringPtrLen(argv[i+1], &col_val_arr[j].val_len);
+            col_val_arr[j].col.assign(col, col_len);
+            reji_string_to_lower(col_val_arr[j].col);
+            val_map[col_val_arr[j].col] = &col_val_arr[j];
+            /*
+              RedisModule_Log(ctx, "notice", "REJI: get key column: %s, value: %*.*s", 
+              col_val_arr[j].col.c_str(), 
+              col_val_arr[j].val_len,
+              col_val_arr[j].val_len,
+              col_val_arr[j].val);
+            */
+        }
+
+        std::string key("");
+        if(!reji_build_key(index, val_map, key))
+        {
+            errmsg.assign("Not enough columns to build key");
+            break;
+        }
+    
+        // fetch key and values
+        RedisModuleString *key_string = RedisModule_CreateString(ctx, key.c_str(), key.length());
+        key_out = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, flags);
+
+        ret = true;
+    }
+    while(false);
+
+    if(col_val_arr)
+		delete [] col_val_arr;
+
+    return ret;
+}
+    
+//============================================================
 int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
 	RedisModule_AutoMemory(ctx);
@@ -346,44 +408,12 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 
     CHECK_SCHEMA_LOADED(ctx);
 
-	size_t name_len = 0;
-	const char *name = RedisModule_StringPtrLen(argv[1], &name_len);
+    // open redis key
+	RedisModuleKey *redis_key = NULL;
+    std::string errmsg("");
+    if(!RejiOpenKeyByIndex(ctx, argv, argc, REDISMODULE_READ, redis_key, errmsg))
+        return RedisModule_ReplyWithError(ctx, errmsg.c_str());
 
-	IndexValMap val_map;
-	reji_index_t *index = NULL;
-	int res = reji_index_get(name, name_len, &index);
-
-	if(res != SCHEMA_OK)
-		return RedisModule_ReplyWithError(ctx, "Index not found");
-
-	// build value map
-	size_t col_len = 0;
-	const char *col = NULL;
-	
-	reji_index_val_t *col_val_arr = (reji_index_val_t*)calloc(argc-2, sizeof(reji_index_val_t));
-	for(int i = 2, j = 0; i < argc; i += 2, j++)
-	{
-		col = RedisModule_StringPtrLen(argv[i], &col_len);
-		col_val_arr[j].val = RedisModule_StringPtrLen(argv[i+1], &col_val_arr[j].val_len);
-		col_val_arr[j].col.assign(col, col_len);
-		reji_string_to_lower(col_val_arr[j].col);
-		val_map[col_val_arr[j].col] = &col_val_arr[j];
-		/*
-		RedisModule_Log(ctx, "notice", "REJI: get key column: %s, value: %*.*s", 
-						col_val_arr[j].col.c_str(), 
-						col_val_arr[j].val_len,
-						col_val_arr[j].val_len,
-						col_val_arr[j].val);
-		*/
-	}
-
-	std::string key("");
-	if(!reji_build_key(index, val_map, key))
-		return RedisModule_ReplyWithError(ctx, "Not enough columns to build key");
-
-	// fetch key and values
-	RedisModuleString *key_string = RedisModule_CreateString(ctx, key.c_str(), key.length());
-	RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ);
 	int key_type = RedisModule_KeyType(redis_key);
 	long arr_len = 0;
 
@@ -422,7 +452,8 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 		RedisModuleString *min_lex = RedisModule_CreateString(ctx, "-", 1);
 		RedisModuleString *max_lex = RedisModule_CreateString(ctx, "+", 1);
 
-		if(RedisModule_ZsetFirstInLexRange(redis_key, min_lex, max_lex) == REDISMODULE_OK)
+		if(RedisModule_ZsetFirstInLexRange(redis_key, min_lex, max_lex) == REDISMODULE_OK && 
+           !RedisModule_ZsetRangeEndReached(redis_key))
 		{
 			RedisModule_ReplyWithArray(ctx,	REDISMODULE_POSTPONED_ARRAY_LEN);
 			
@@ -458,10 +489,8 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 	}
 	
 	// cleanup
-	if(col_val_arr)
-		free(col_val_arr);
-
-	RedisModule_CloseKey(redis_key);
+    if(redis_key)
+        RedisModule_CloseKey(redis_key);
 
 	if(arr_len == 0)
 		RedisModule_ReplyWithArray(ctx, 0);
@@ -570,6 +599,157 @@ int RejiKeys_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 	return RejiGetKeysAndValues(true, ctx, argv, argc);
 }
 
+/* REJI.DEL index key value [key1 value1 ...] - deletes objects and associated index keys*/
+//============================================================
+int RejiDel_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+	RedisModule_AutoMemory(ctx);
+
+	if (argc < 4 || (argc%2) != 0)
+		return RedisModule_WrongArity(ctx);
+
+    CHECK_SCHEMA_LOADED(ctx);
+
+    // open redis key
+	RedisModuleKey *redis_key = NULL;
+    std::string errmsg("");
+    if(!RejiOpenKeyByIndex(ctx, argv, argc, (REDISMODULE_READ|REDISMODULE_WRITE), redis_key, errmsg))
+        return RedisModule_ReplyWithError(ctx, errmsg.c_str());
+
+	int key_type = RedisModule_KeyType(redis_key);
+	
+	if(key_type == REDISMODULE_KEYTYPE_STRING)
+	{
+		size_t pk_len = 0;
+		const char *pk_data = RedisModule_StringDMA(redis_key, &pk_len, REDISMODULE_READ);
+
+		RedisModuleString *pk_string = RedisModule_CreateString(ctx, pk_data, pk_len);
+		RedisModuleKey *pk_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, pk_string, REDISMODULE_WRITE);
+
+        RedisModule_DeleteKey(pk_key);
+		RedisModule_CloseKey(pk_key);
+	}
+	else if(key_type == REDISMODULE_KEYTYPE_ZSET)
+	{
+		RedisModuleString *min_lex = RedisModule_CreateString(ctx, "-", 1);
+		RedisModuleString *max_lex = RedisModule_CreateString(ctx, "+", 1);
+
+		if(RedisModule_ZsetFirstInLexRange(redis_key, min_lex, max_lex) == REDISMODULE_OK)
+		{
+			do
+			{
+				RedisModuleString *pk_string = RedisModule_ZsetRangeCurrentElement(redis_key, NULL);
+				RedisModuleKey *pk_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, pk_string, REDISMODULE_WRITE);
+                RedisModule_DeleteKey(pk_redis_key);
+                RedisModule_CloseKey(pk_redis_key);
+
+			} while(RedisModule_ZsetRangeNext(redis_key));
+		}
+	}
+	
+	// delete index key
+    if(redis_key)
+    {
+        RedisModule_DeleteKey(redis_key);
+        RedisModule_CloseKey(redis_key);
+    }
+
+	return RedisModule_ReplyWithSimpleString(ctx, "OK");
+}
+
+/* REJI.KDEL key [key1 key2 ...] - deletes objects and associated index keys*/
+//============================================================
+int RejiKDel_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+	RedisModule_AutoMemory(ctx);
+
+	if (argc < 2)
+		return RedisModule_WrongArity(ctx);
+
+    CHECK_SCHEMA_LOADED(ctx);
+
+    int ret_code = REDISMODULE_OK;
+    int count = 0;
+
+    for(int i = 1; i < argc; i++)
+    {
+        // open object by key
+        RedisModuleKey *pk_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, argv[i], REDISMODULE_READ | REDISMODULE_WRITE);
+
+        int pk_key_type = RedisModule_KeyType(pk_redis_key);
+        if(pk_key_type == REDISMODULE_KEYTYPE_EMPTY)
+        {
+            RedisModule_CloseKey(pk_redis_key);
+            continue;
+        }
+        // ignore on non-string data
+        else if(pk_key_type != REDISMODULE_KEYTYPE_STRING)
+        {
+            size_t data_len = 0;
+            const char *data = RedisModule_StringPtrLen(argv[i], &data_len);
+            RedisModule_Log(ctx, "notice", "Ignore non-string data for key: %*.*s", data_len, data_len, data); 
+            RedisModule_CloseKey(pk_redis_key);
+            continue;
+        }
+
+        // try to parse the record first
+        size_t json_data_len = 0;
+        const char *json_data = RedisModule_StringDMA(pk_redis_key, &json_data_len, REDISMODULE_READ);
+        struct json_object *jobj = RejiParseJSON(json_data,json_data_len);
+
+        // delete all indexes if record if json parsing succeeded
+        if(jobj)
+        {
+            reji_index_keys_map_t keys_map;
+
+            reji_build_index_keys(jobj, keys_map);
+
+            for(reji_index_keys_map_t::iterator keys_it = keys_map.begin(); ret_code == REDISMODULE_OK && keys_it != keys_map.end(); ++keys_it)
+            {
+                reji_index_key_t &index_key = keys_it->second;
+
+                RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
+                RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+                int redis_key_type = RedisModule_KeyType(redis_key);
+
+                if(redis_key_type == REDISMODULE_KEYTYPE_EMPTY || IS_UNIQUE(index_key.index))
+                {
+                    RedisModule_DeleteKey(redis_key);
+                }
+                else
+                {
+                    // make sure the record is ZSET and fail if not
+                    if(redis_key_type == REDISMODULE_KEYTYPE_ZSET)
+                    {
+                        RedisModule_ZsetRem(redis_key, argv[i], NULL);
+                    }
+                    else
+                    {
+                        RedisModule_Log(ctx, "warning" "Non-unique index record has wrong type: %s", index_key.index->name);
+                    }
+                }
+
+                RedisModule_CloseKey(redis_key);
+            }
+
+            reji_free_index_keys(keys_map);
+        }
+
+        // delete object
+        RedisModule_DeleteKey(pk_redis_key);
+        RedisModule_CloseKey(pk_redis_key);
+
+        // cleanup
+        if(jobj)
+            json_object_put(jobj);
+
+        // count deleted keys
+        count++;
+    }
+    
+	return ret_code == REDISMODULE_OK ? RedisModule_ReplyWithLongLong(ctx, count) : RedisModule_ReplyWithError(ctx, "Failed to delete keys");
+}
+
 /* This function must be present on each Redis module. It is used in order to
  * register the commands into the Redis server. */
 //============================================================
@@ -597,6 +777,12 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         return REDISMODULE_ERR;
 
 	if(RedisModule_CreateCommand(ctx, "reji.keys", RejiKeys_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    if(RedisModule_CreateCommand(ctx, "reji.del", RejiDel_RedisCommand, "write fast", 0, 0, 0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    if(RedisModule_CreateCommand(ctx, "reji.kdel", RejiKDel_RedisCommand, "write fast", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     reji_schema_init();
