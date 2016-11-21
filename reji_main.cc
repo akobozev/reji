@@ -146,7 +146,132 @@ struct json_object *RejiParseJSON(const char *data, size_t len)
 
 	return jobj;
 }
-	
+
+//============================================================
+int RejiReIndex(RedisModuleCtx *ctx, reji_index_t *index)
+{
+    RedisModuleCallReply *reply = NULL;
+    size_t cursor0_len = 1;
+    const char *cursor0 = "0";
+    RedisModuleString *cursor = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, "0");
+    std::vector<std::string> errorKeys;
+    int done = 0;
+
+    do
+    {
+        RedisModule_Log(ctx, "notice", "ReIndex records: cursor: %*.*s", cursor0_len, cursor0_len, cursor0);
+        reply = RedisModule_Call(ctx, "scan", "s", cursor);
+    
+        if(!reply)
+            break;
+
+        size_t reply_len = RedisModule_CallReplyLength(reply);
+
+        if(reply_len == 2)
+        {
+            RedisModuleCallReply *c = RedisModule_CallReplyArrayElement(reply, 0);
+            RedisModuleCallReply *list = RedisModule_CallReplyArrayElement(reply, 1);
+
+            cursor = RedisModule_CreateStringFromCallReply(c);
+            
+            cursor0 = RedisModule_CallReplyStringPtr(c, &cursor0_len);
+
+            size_t list_len = RedisModule_CallReplyLength(list);
+            for(size_t i = 0; i < list_len; i++)
+            {
+                RedisModuleCallReply *rkey = RedisModule_CallReplyArrayElement(list, i);
+                RedisModuleString *pk_key = RedisModule_CreateStringFromCallReply(rkey);
+                RedisModuleKey *pk_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, pk_key, REDISMODULE_READ|REDISMODULE_WRITE);
+                struct json_object *jobj = NULL;
+
+                do
+                {
+                    if(RedisModule_KeyType(pk_redis_key) != REDISMODULE_KEYTYPE_STRING)
+                    {
+                        break;
+                    }
+                
+                    // retrieve data
+                    size_t pk_row_len = 0;
+                    const char *pk_row_data = RedisModule_StringDMA(pk_redis_key, &pk_row_len, REDISMODULE_READ);
+
+                    if(pk_row_len > 4 && !memcmp(pk_row_data, REDIS_REJI_PREFIX, 4))
+                        break;
+
+                    jobj = RejiParseJSON(pk_row_data,pk_row_len);
+                    if(!jobj)
+                    {
+                        break;
+                    }
+
+                    reji_index_key_t index_key = {NULL, NULL};
+                    if(!reji_build_key_from_record(index, jobj, index_key))
+                    {
+                        break;
+                    }
+                    
+                    // insert index key
+                    RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
+                    RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
+                    int redis_key_type = RedisModule_KeyType(redis_key);
+				
+                    if(redis_key_type == REDISMODULE_KEYTYPE_EMPTY)
+                    {
+                        // handle unique/non-unique index cases here
+                        if(IS_UNIQUE(index_key.index))
+                            RedisModule_StringSet(redis_key, pk_key);
+                        else
+                            RedisModule_ZsetAdd(redis_key, 0, pk_key, NULL);
+                    }
+                    else if(!IS_UNIQUE(index_key.index) && redis_key_type == REDISMODULE_KEYTYPE_ZSET)
+                    {
+                        // make sure the record is ZSET and fail if not
+                        // add the primary key to the non-unique index keys set
+                        RedisModule_ZsetAdd(redis_key, 0, pk_key, NULL);
+                    }
+                    else
+                    {
+                        size_t pk_key_len = 0;
+                        const char *pk_key_data = RedisModule_StringPtrLen(pk_key, &pk_key_len);
+
+                        errorKeys.push_back(std::string(pk_key_data, pk_key_len));
+                    }
+
+                    RedisModule_CloseKey(redis_key);
+                }
+                while(false);
+                
+                // release objects
+                if(jobj)
+                    json_object_put(jobj);
+                RedisModule_CloseKey(pk_redis_key);
+            }
+        }
+
+        RedisModule_FreeCallReply(reply);
+        reply = NULL;
+        
+        if(cursor0_len == 1 && cursor0[0] == '0')
+            done = 1;
+    }
+    while(!done);
+    
+    if(errorKeys.size() > 0)
+    {
+        RedisModule_ReplyWithArray(ctx,	REDISMODULE_POSTPONED_ARRAY_LEN);
+        for(size_t i = 0; i < errorKeys.size(); i++)
+        {
+            RedisModule_ReplyWithSimpleString(ctx, errorKeys[i].c_str());
+        }
+        RedisModule_ReplySetArrayLength(ctx, errorKeys.size());
+    }
+    else
+    {
+        RedisModule_ReplyWithArray(ctx, 0);
+    }
+    return REDISMODULE_OK;
+}
+    
 //============================================================
 int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 {
@@ -522,7 +647,7 @@ int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 		RedisModuleString *name = (RedisModuleString *)RedisModule_CreateStringPrintf(ctx, index->name);
 		RedisModule_HashSet(redis_key, REDISMODULE_HASH_NONE, name, argv[1], NULL);
 		RedisModule_CloseKey(redis_key);
-		return RedisModule_ReplyWithSimpleString(ctx, "OK");
+		return RejiReIndex(ctx, index);//RedisModule_ReplyWithSimpleString(ctx, "OK");
 	}
     else if(res == SCHEMA_INDEX_EXISTS)
     {
@@ -673,6 +798,9 @@ int RejiKDel_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 
     for(int i = 1; i < argc; i++)
     {
+        size_t pk_data_len = 0;
+        const char *pk_data = RedisModule_StringPtrLen(argv[i], &pk_data_len);
+
         // open object by key
         RedisModuleKey *pk_redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, argv[i], REDISMODULE_READ | REDISMODULE_WRITE);
 
@@ -685,9 +813,7 @@ int RejiKDel_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
         // ignore on non-string data
         else if(pk_key_type != REDISMODULE_KEYTYPE_STRING)
         {
-            size_t data_len = 0;
-            const char *data = RedisModule_StringPtrLen(argv[i], &data_len);
-            RedisModule_Log(ctx, "notice", "Ignore non-string data for key: %*.*s", data_len, data_len, data); 
+            RedisModule_Log(ctx, "notice", "Ignore non-string data for key: %*.*s", pk_data_len, pk_data_len, pk_data); 
             RedisModule_CloseKey(pk_redis_key);
             continue;
         }
@@ -714,7 +840,20 @@ int RejiKDel_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 
                 if(redis_key_type == REDISMODULE_KEYTYPE_EMPTY || IS_UNIQUE(index_key.index))
                 {
-                    RedisModule_DeleteKey(redis_key);
+                    size_t key_data_len = 0;
+                    const char *key_data = RedisModule_StringDMA(redis_key, &key_data_len, REDISMODULE_READ);
+
+                    if(key_data_len == pk_data_len && memcmp(pk_data, key_data, pk_data_len) == 0)
+                    {
+                        RedisModule_DeleteKey(redis_key);
+                    }
+                    else
+                    {
+                        RedisModule_Log(ctx, "warning",
+                                        "Not removing unique index for key: %*.*s, delete key: %*.*s", 
+                                        key_data_len, key_data_len, key_data,
+                                        pk_data_len, pk_data_len, pk_data);
+                    }
                 }
                 else
                 {
@@ -725,7 +864,8 @@ int RejiKDel_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
                     }
                     else
                     {
-                        RedisModule_Log(ctx, "warning" "Non-unique index record has wrong type: %s", index_key.index->name);
+                        RedisModule_Log(ctx, "warning", 
+                                        "Non-unique index record has wrong type: %s", index_key.index->name);
                     }
                 }
 

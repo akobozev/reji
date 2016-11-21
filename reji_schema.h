@@ -11,6 +11,7 @@
 #include "json.h"
 
 // redis schema key
+#define REDIS_REJI_PREFIX "REJI"
 #define REDIS_SCHEMA_KEY "REJI:SCHEMA"
 #define REDIS_INDEX_KEY_PREFIX "REJI:KEY:"
 #define REDIS_INDEX_KEY_SEPARATOR "/"
@@ -73,6 +74,7 @@ void reji_index_iter_stop(reji_index_iter_t *iter);
 int reji_index_iter_next(reji_index_iter_t *iter);
 
 bool reji_build_key(reji_index_t *index, IndexValMap& obj_map, std::string& key);
+bool reji_build_key_from_record(reji_index_t *index, json_object *jobj, reji_index_key_t& index_key);
 int reji_build_index_keys(json_object *jobj, reji_index_keys_map_t& keys_map);
 void reji_free_index_keys(reji_index_keys_map_t& keys_map);
 void reji_free_index_key(reji_index_key_t& index_key);

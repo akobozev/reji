@@ -299,6 +299,28 @@ bool reji_build_key(reji_index_t *index, IndexValMap& obj_map, std::string& key)
 	return res;
 }	
 
+//============================================================
+bool reji_build_key_from_record(reji_index_t *index, json_object *jobj, reji_index_key_t& index_key)
+{
+	// index the JSON object fields first
+	JsonObjectMap jobj_map; 
+
+	json_object_object_foreach(jobj, jobj_key, jobj_val)
+	{
+		enum json_type jobj_type = json_object_get_type(jobj_val);
+		
+		// skip all the object and array fields
+		if(jobj_type == json_type_array || jobj_type == json_type_object)
+			continue;
+
+		// associate field name with string value
+		jobj_map[str_to_lower(jobj_key)] = json_object_get_string(jobj_val);
+		
+	}
+    
+	return reji_build_index_key(index, jobj_map, index_key);
+}	
+
 // PRIVATE
 //============================================================
 void reji_index_release(reji_index_t *index)
