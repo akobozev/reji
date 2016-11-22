@@ -1,0 +1,72 @@
+#!/usr/bin/expect
+
+proc assert {exp_string} {
+	expect {
+		timeout {
+			puts "Failed\r"
+			exit 1
+		}
+		$exp_string
+	}
+	expect "> "
+}
+
+set timeout 1
+spawn redis-cli
+
+expect "> "
+puts "Creating unique index..."
+send "reji.create \"{\\\"name\\\": \\\"uidx\\\", \\\"columns\\\": \[\\\"author\\\"\], \\\"unique\\\": \\\"true\\\"}\"\r"
+assert "(empty list or set)"
+
+puts "Adding records..."
+send "reji.put \"book1\" \"{\\\"author\\\": \\\"Gambardella, Matthew\\\", \\\"name\\\": \\\"XML Dev Guide\\\", \\\"price\\\": \\\"49.95\\\"}\"\r"
+assert "OK"
+
+send "reji.put \"book2\" \"{\\\"author\\\": \\\"Ralls, Kim\\\", \\\"name\\\": \\\"Midnight Rain\\\", \\\"price\\\": \\\"5.95\\\"}\"\r"
+assert "OK"
+
+send "reji.put \"book3\" \"{\\\"author\\\": \\\"Corets, Eva\\\", \\\"name\\\": \\\"Maeve Ascendant\\\", \\\"price\\\": \\\"15.99\\\"}\"\r"
+assert "OK"
+
+puts "Test record update..."
+send "reji.put \"book3\" \"{\\\"author\\\": \\\"Corets, Eva (Jr.)\\\", \\\"name\\\": \\\"Maeve Ascendant - Updated\\\", \\\"price\\\": \\\"17.99\\\"}\"\r"
+assert "OK"
+
+puts "Test PUTNX..."
+send "reji.putnx \"book3\" \"{\\\"author\\\": \\\"Randall, Cynthia\\\", \\\"name\\\": \\\"Lover Birds\\\", \\\"price\\\": \\\"10.99\\\"}\"\r"
+assert "Key is not unique"
+
+puts "Test index violation..."
+send "reji.put \"book4\" \"{\\\"author\\\": \\\"Corets, Eva (Jr.)\\\", \\\"name\\\": \\\"Maeve Ascendant - Part II\\\", \\\"price\\\": \\\"16.99\\\"}\"\r"
+assert "Unique index violation: uidx"
+
+puts "Test fetching record by duplicate index key..."
+send "reji.get uidx author \"Randall, Cynthia\"\r"
+assert "(empty list or set)"
+
+puts "Test fetching key by duplicate index key..."
+send "reji.keys uidx author \"Randall, Cynthia\"\r"
+assert "(empty list or set)"
+
+puts "Test fetching record by index key..."
+send "reji.get uidx author \"Ralls, Kim\"\r"
+assert "1\)"
+
+puts "Test fetching record by index updated key..."
+send "reji.get uidx author \"Corets, Eva \(Jr\.\)\"\r"
+assert "1\)"
+
+puts "Test fetching key by index key..."
+send "reji.keys uidx author \"Ralls, Kim\"\r"
+assert "book2"
+
+puts "Test fetching key by index updated key..."
+send "reji.keys uidx author \"Corets, Eva \(Jr\.\)\"\r"
+assert "book3"
+
+puts "Dropping index..."
+send "reji.drop uidx\r"
+assert "OK"
+
+puts "Done."

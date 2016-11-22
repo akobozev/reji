@@ -438,7 +438,8 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 					RedisModule_StringSet(user_data_redis_key, argv[2]);
 					RedisModule_CloseKey(user_data_redis_key);
 
-					for(reji_index_keys_map_t::iterator keys_it = keys_map.begin(); keys_it != keys_map.end(); ++keys_it)
+					// remove all the remaining existing keys to keys_map to 
+					for(reji_index_keys_map_t::iterator keys_it = existing_keys_map.begin(); keys_it != existing_keys_map.end(); ++keys_it)
 					{
 						reji_index_key_t &index_key = keys_it->second;
 						RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
@@ -528,7 +529,7 @@ int RejiGetKeysAndValues(bool keysOnly, RedisModuleCtx *ctx, RedisModuleString *
 {
 	RedisModule_AutoMemory(ctx);
 
-	if (argc < 4 || (argc%2) != 0)
+	if (argc < 4 || (argc % 2) != 0)
 		return RedisModule_WrongArity(ctx);
 
     CHECK_SCHEMA_LOADED(ctx);
@@ -651,7 +652,7 @@ int RejiCreate_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 	}
     else if(res == SCHEMA_INDEX_EXISTS)
     {
-        RedisModule_ReplyWithError(ctx, "Index already exists");
+        return RedisModule_ReplyWithError(ctx, "Index already exists");
     }
 
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
@@ -690,7 +691,7 @@ int RejiDrop_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 	}
 	else if(res == SCHEMA_INDEX_NOT_EXISTS)
     {
-        RedisModule_ReplyWithError(ctx, "Index not found");
+        return RedisModule_ReplyWithError(ctx, "Index not found");
     }
     
 	return RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);

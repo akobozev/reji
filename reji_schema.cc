@@ -59,7 +59,6 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 		// try to parse the record first
 		jobj = json_tokener_parse_ex(tok, json_data, json_data_len);
 
-		//printf("index start parsing\n");
 		if(jobj)
 		{
 			json_object *val = NULL;
@@ -82,7 +81,6 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
             
 			index = (reji_index_t*)calloc(1, sizeof(reji_index_t));
             index->name = tmp;
-			//printf("index name: %s\n", index->name);
 			
 			if(json_object_object_get_ex(jobj, INDEX_UNIQUE, &val))
 			{
@@ -97,7 +95,7 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 			}
 
 			int arrLen = json_object_array_length(val);
-			//printf("column num: %d\n", arrLen);
+
 			index->columns = (char **)calloc(arrLen, sizeof(char*));
 			index->numColumns = arrLen;
 			
@@ -106,7 +104,6 @@ int reji_index_create(const char *json_data, size_t json_data_len, reji_index_t 
 				json_object *arrVal = json_object_array_get_idx(val, i);
 				index->columns[i] = strdup(json_object_get_string(arrVal));
                 index->columns[i] = str_to_lower(index->columns[i]);
-				//printf("column[%d]: %s\n", i, index->columns[i]);
 			}
 			
 			g_index_map->insert(IndexPair(index->name, index));
@@ -139,7 +136,6 @@ int reji_index_drop(char *indexName)
 
 	if(it != g_index_map->end())
 	{
-		//printf("drop index: %s\n", it->second->name);
 		reji_index_release(it->second);
 		g_index_map->erase(it);
         return SCHEMA_OK;
