@@ -244,8 +244,8 @@ int reji_build_index_keys(json_object *jobj, reji_index_keys_map_t& keys_map)
 		reji_index_key_t index_key = {NULL, NULL};
 
 		// TODO: check return value (?)
-		reji_build_index_key(idx_it->second, jobj_map, index_key);
-		keys_map[index_key.key] = index_key;
+        if(reji_build_index_key(idx_it->second, jobj_map, index_key))
+            keys_map[index_key.key] = index_key;
 	}
 	
 	return res;
@@ -348,7 +348,7 @@ bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_inde
 	key_value += index->name;
 
 	// iterate over index fields and build a key from correspondent jobj values
-	for(int i = 0; i < index->numColumns; i++)
+	for(int i = 0; i < index->numColumns && res; i++)
 	{
 		JsonObjectMap::iterator it = obj_map.find(index->columns[i]);
 
@@ -360,9 +360,12 @@ bool reji_build_index_key(reji_index_t *index, JsonObjectMap& obj_map, reji_inde
 			res = false;
 	}
 
-	index_key.key = strdup(key_value.c_str());
-	index_key.index = index;
-	
+    if(res)
+    {
+        index_key.key = strdup(key_value.c_str());
+        index_key.index = index;
+	}
+    
 	return res;
 }	
 
