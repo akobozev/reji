@@ -445,7 +445,11 @@ int RejiPut(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, bool nx)
 						RedisModuleString *key_string = RedisModule_CreateString(ctx, index_key.key, strlen(index_key.key));
 						RedisModuleKey *redis_key = (RedisModuleKey *)RedisModule_OpenKey(ctx, key_string, REDISMODULE_READ | REDISMODULE_WRITE);
 
-						RedisModule_DeleteKey(redis_key);
+						if(IS_UNIQUE(index_key.index))
+							RedisModule_DeleteKey(redis_key);
+						else
+							RedisModule_ZsetRem(redis_key, argv[1], NULL);
+
 						RedisModule_CloseKey(redis_key);
 					}
 				}

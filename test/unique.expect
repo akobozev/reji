@@ -65,6 +65,22 @@ puts "Test fetching key by index updated key..."
 send "reji.keys uidx author \"Corets, Eva \(Jr\.\)\"\r"
 assert "book3"
 
+puts "Delete by index..."
+send "reji.del uidx author \"Corets, Eva \(Jr\.\)\"\r"
+assert "OK"
+
+puts "Test fetching record by deleted index key..."
+send "reji.get uidx author \"Corets, Eva \(Jr\.\)\"\r"
+assert "(empty list or set)"
+
+puts "Delete by key..."
+send "reji.kdel book1\r"
+assert "(integer) 1"
+
+puts "Test fetching deleted record by index key..."
+send "reji.get uidx author \"Gambardella, Matthew\"\r"
+assert "(empty list or set)"
+
 puts "Dropping index..."
 send "reji.drop uidx\r"
 assert "OK"
