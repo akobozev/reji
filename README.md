@@ -128,7 +128,7 @@ Redis-cli examples:
 
 ## `REJI.KDEL`
 
-    REJI.KDEL <key>
+    REJI.KDEL <key1> ... <keyN>
 
 Deletes the index record(s) together with the original data record by data key. 
 
