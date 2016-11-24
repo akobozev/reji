@@ -144,8 +144,11 @@ To run the test(s) please make sure expect binary exists in /usr/bin, redis-cli 
 
 # Future enhancements
 
+* Add REJI.CREATE non-json parameters support
+* Add support for records TTL
 * Introduce index namespaces for better granularity: apply indices by data key prefix
 * Support indexing of fields of any level of JSON objects, i.e. field 'author' as well as field 'author.name' etc.
+* Support redis cluster
 * Minor code refactoring and optimization
 
 # Authors
