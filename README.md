@@ -15,7 +15,8 @@ It provides the following Redis commands:
 # Building Reji Module
 
 1. Make sure autoconf, libtool and libstdc++ packages are installed
-2. Run 'make'
+2. Clone repo to redis/src directory
+3. Run 'make'
 
 # Commands reference
 
@@ -68,11 +69,11 @@ Returns OK or "(error) Unique index violation: <index_name>".
 Redis-cli examples:
 
     > REJI.PUT book1 "{\"author\": \"Corets, Eva (Jr.)\", \"name\": \"Maeve Ascendant - Part II\", \"price\": \"16.99\"}"
-	> OK
+	OK
     > REJI.PUT book2 "{\"author\": \"Corets, Eva (Jr.)\", \"name\": \"Maeve Ascendant - Part II\", \"price\": \"16.99\"}"
-	> (error) Unique index violation: uidx
+	(error) Unique index violation: uidx
     > REJI.PUT not_a_book_data "some_data" 
-	> OK
+	OK
 
 ## `REJI.PUTNX`
 
@@ -86,8 +87,70 @@ Fails if given key exists in DB (same as SETNX)
     REJI.KEYS <index_name> <column1_name> <value1> ... <columnN_name> <valueN>
 
 Retrieves the list of keys corresponding to non-unique index or list containing single key for unique index.
-Parameters are given in column/value pair for all the columns defined in index.
+Parameters are given in column/value pair for all the columns defined in index. If not all the index columns are specified, command will return error.
 
+Redis-cli examples:
 
-
+    > REJI.KEYS idx author "Corets, Eva (Jr.)"
+    1) "book1"
+    2) "book2"
+    3) "book3"
+    > REJI.KEYS idx author "Corets"
+	(empty list or set)
+    > REJI.KEYS idx_no author "Corets"
+	(error) Index not found
 	
+## `REJI.GET`
+
+    REJI.GET <index_name> <column1_name> <value1> ... <columnN_name> <valueN>
+
+See REJI.KEYS for parameters reference.
+Returns the list of data records correcponding index.
+
+Redis-cli examples:
+
+    > REJI.GET idx author "Corets, Eva (Jr.)"
+    1) "{\"author\": \"Corets, Eva\", \"name\": \"XML Dev Guide\", \"price\": \"49.95\"}"
+    2) "{\"author\": \"Corets, Eva\", \"name\": \"Midnight Rain\", \"price\": \"5.95\"}"
+    3) "{\"author\": \"Corets, Eva\", \"name\": \"Maeve Ascendant - Updated\", \"price\": \"17.99\"}"
+
+## `REJI.DEL`
+
+    REJI.DEL <index_name> <column1_name> <value1> ... <columnN_name> <valueN>
+
+See REJI.KEYS for parameters reference.
+Deletes the index record(s) together with the original data record by index.
+
+Redis-cli examples:
+
+    > REJI.DEL idx author "Corets, Eva (Jr.)"
+    OK
+
+## `REJI.KDEL`
+
+    REJI.KDEL <key>
+
+Deletes the index record(s) together with the original data record by data key. 
+
+Redis-cli examples:
+
+    > REJI.KDEL book1
+    OK
+
+# Testing
+
+Directory 'test' contains 3 expect scripts demonstrating/validating the create/drop, unique and non-unique index functionalities.
+To run the test(s) please make sure expect binary exists in /usr/bin, redis-cli is in the PATH, redis server is running and reji.so is loaded.
+
+# Future enhancements
+
+* Introduce index namespaces for better granularity: apply indices by data key prefix
+* Support indexing of fields of any level of JSON objects, i.e. field 'author' as well as field 'author.name' etc.
+* Minor code refactoring and optimization
+
+# Authors
+
+    Alexey Kobozev
+    Ilan Bronshtein
+
+(c) 2016

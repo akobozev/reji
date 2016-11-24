@@ -15,6 +15,9 @@ set timeout 1
 spawn redis-cli
 
 expect "> "
+send "flushdb\r"
+assert "OK"
+
 puts "Creating unique index..."
 send "reji.create \"{\\\"name\\\": \\\"uidx\\\", \\\"columns\\\": \[\\\"author\\\"\], \\\"unique\\\": \\\"true\\\"}\"\r"
 assert "(empty list or set)"
